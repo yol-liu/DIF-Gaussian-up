@@ -9,6 +9,18 @@ from torch.utils.data import Dataset
 from utils import sitk_load
 from datasets.geometry import Geometry
 
+# NumPy 2 compatibility: the LUNA16 projections were preprocessed with numpy>=2,
+# whose pickles reference numpy._core.*; numpy<2 cannot unpickle them directly.
+try:
+    if not hasattr(np, '_core'):
+        import sys as _sys
+        np._core = np.core
+        _sys.modules.setdefault('numpy._core', np.core)
+        _sys.modules.setdefault('numpy._core.multiarray', np.core.multiarray)
+        _sys.modules.setdefault('numpy._core.overrides', np.core.overrides)
+except Exception:
+    pass
+
 
 
 class CBCT_dataset(Dataset):
@@ -22,6 +34,8 @@ class CBCT_dataset(Dataset):
             out_res_scale=1.0,
             random_views=False,
             view_offset=0,
+            load_gt_volume=False,
+            gt_volume_scale=0.25,
         ):
         super().__init__()
         if not (0. < out_res_scale and out_res_scale <= 1.):
@@ -30,6 +44,9 @@ class CBCT_dataset(Dataset):
         self.cfg = cfg
         self.dst_name = dst_name
         self.data_root = os.path.join(self.cfg.root_dir, dst_name)
+        # optional full CT for C1 posterior (GT encoder); inference never needs it
+        self.load_gt_volume = load_gt_volume
+        self.gt_volume_scale = gt_volume_scale
         
         # load dataset info
         with open(os.path.join(self.data_root, 'meta_info.json'), 'r') as f:
@@ -169,4 +186,15 @@ class CBCT_dataset(Dataset):
         if not self.is_train:
             ret_dict['spacing'] = spacing # [3,]
             ret_dict['origin'] = origin   # [3,]
+        # downsampled GT volume for amortized posterior (C1); kept off by default
+        if self.load_gt_volume and self.is_train:
+            gt_vol, _, _ = sitk_load(
+                os.path.join(self.data_root, self.info['image'].format(name)),
+                uint8=True,
+            )
+            if self.gt_volume_scale < 1.0:
+                gt_vol = scipy.ndimage.zoom(
+                    gt_vol, self.gt_volume_scale, order=1, prefilter=False
+                )
+            ret_dict['gt_volume'] = gt_vol[None, ...]  # [1, D, H, W]
         return ret_dict

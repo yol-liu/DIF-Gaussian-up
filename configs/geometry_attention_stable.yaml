@@ -1,0 +1,40 @@
+model:
+  image_encoder:
+    out_ch: 128
+  point_decoder:
+    mlp_chs: [256, 64, 16, 1]
+
+  # Stable geometry-attention recipe:
+  # - keep legacy Gaussian interpolation (do NOT change knn/normalize yet)
+  # - attention is a zero-init residual on top of masked max pooling
+  # - no view dropout / attention dropout until the residual is useful
+  anchor_fusion: geometry_attention
+  point_fusion: max
+
+  view_fusion:
+    d_model: 256
+    num_heads: 4
+    num_layers: 1
+    dropout: 0.0
+    geometry_hidden_dim: 64
+    return_attention: false
+    view_dropout: 0.0
+    min_train_views: 2
+    use_max_residual: true
+    content_query: true
+
+  gs:
+    t: 512
+    res: 12
+    p_dist_scaling: 1.0
+    o_scaling: 1.0
+    s_scaling: 0.3
+    # keep baseline GS behavior for a fair/stable comparison
+    knn_k: 3
+    shifted_center_knn: false
+    normalize_weights: false
+    covariance_jitter: 0.0
+
+dataset:
+  root_dir: /home/user/workspace/C2RV-CBCT/data
+  gs_res: 12

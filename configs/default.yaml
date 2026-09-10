@@ -10,7 +10,30 @@ model:
     o_scaling: 1.0 # for offsets
     s_scaling: 0.3 # for scaling vector
 
+  # C1 hierarchical latent (off by default = deterministic baseline)
+  latent:
+    use_latent: false
+    global_dim: 64
+    use_local: false
+    local_dim: 16
+    grid_res: 4
+    beta_g: 1.0e-3
+    beta_l: 1.0e-2
+    free_bits_g: 0.5
+    free_bits_l: 0.1
+    kl_warmup_steps: 20000
+    prior_sigma_floor: 1.0e-2
+    volume_likelihood: laplace
+    volume_sigma: 0.1
+    lambda_v: 1.0
+    gt_feat_ch: 32
+  sampling:
+    sample_from: posterior
+    num_samples: 1
+
 dataset:
-  root_dir: ../../datasets
+  # CBCT_dataset joins root_dir / dst_name (default: LUNA16)
+  # Expected layout: <root_dir>/LUNA16/{meta_info.json,config.yaml,processed/...}
+  root_dir: /home/user/workspace/C2RV-CBCT/data
   gs_res: 12 # the resolution of GS points (12^3 points in total)
   

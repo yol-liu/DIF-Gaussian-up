@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 from datasets.dst_gs import CBCT_dataset_gs
-from models.model import DIF_Gaussian
+from models.probabilistic_model import build_model
 from utils import convert_cuda, load_config, sitk_save
 
 
@@ -118,8 +118,8 @@ if __name__ == '__main__':
     ckpt = torch.load(ckpt_path, map_location=torch.device('cpu'))
     print('load ckpt from', ckpt_path)
     
-    model = DIF_Gaussian(cfg.model)
-    model.load_state_dict(ckpt)
+    model = build_model(cfg.model)
+    model.load_state_dict(ckpt, strict=False)
     model = model.cuda()
 
     # -- output dir
