@@ -20,9 +20,11 @@ def knn_search(query, ref, k):
     if _HAS_PYTORCH3D:
         _, idx, _ = _p3d_knn_points(query, ref, K=k)
         return idx
-    dists = torch.cdist(query, ref)  # [B, N, K]
-    _, idx = torch.topk(dists, k, dim=-1, largest=False)
-    return idx
+    chunk_size = max(1, 4_000_000 // (query.shape[0] * ref.shape[1]))
+    return torch.cat([
+        torch.cdist(chunk, ref).topk(k, dim=-1, largest=False).indices
+        for chunk in query.split(chunk_size, dim=1)
+    ], dim=1)
 
 
 def knn_gather(x, idx):

@@ -1,0 +1,65 @@
+# Probability repair protocol; settings are not tuned CT results.
+model:
+  image_encoder:
+    out_ch: 128
+  point_decoder:
+    mlp_chs:
+    - 256
+    - 64
+    - 16
+    - 1
+    legacy_head: false
+  mask_fov: true
+  anchor_fusion: max
+  point_fusion: max
+  gs:
+    t: 512
+    res: 12
+    p_dist_scaling: 1.0
+    o_scaling: 1.0
+    s_scaling: 0.3
+    knn_k: 3
+    shifted_center_knn: false
+    normalize_weights: false
+    covariance_jitter: 0.0
+  probabilistic:
+    mode: dense_np
+    objective: frozen_reference
+    normalization: groupnorm
+    film_init_std: 0.001
+    train_samples: 1
+    latent:
+      global_dim: 64
+      use_local: false
+      sigma_min: 0.001
+      sigma_max: 3.0
+      initial_sigma: 0.5
+    reconstruction:
+      likelihood: gaussian
+      observation_sigma: 0.1
+      reduction: mean_query
+    kl:
+      beta_final: 1.0
+      warmup_steps: 0
+      free_bits: 0.0
+      free_bits_order: per_case
+      reduction: sum_latent_mean_batch
+    evaluation:
+      estimator: prior_mc_mean
+      num_samples: 8
+      seed: 0
+    reference_checkpoint: null
+    reference_evidence: null
+dataset:
+  root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
+  gs_res: 12
+  structure_supervision: false
+  paired_views:
+    dense_count: 12
+    context_counts:
+    - 4
+    - 6
+    - 8
+loss:
+  reconstruction_loss: gaussian
+  volume_sigma: 0.1

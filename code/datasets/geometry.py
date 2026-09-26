@@ -13,6 +13,21 @@ class Geometry(object):
 
         self.DSO = config['DSO'] # mm, source to origin
         self.DSD = config['DSD'] # mm, source to detector
+        self.scanner_origin_offset = np.asarray(config.get('offOrigin', [0., 0., 0.]))
+        self.detector_offset = np.asarray(config.get('offDetector', [0., 0.]))
+        self.mode = config.get('mode', 'cone')
+
+    def adapter_fields(self):
+        if self.mode != 'cone':
+            raise ValueError('Only the calibrated legacy cone geometry is supported')
+        return {
+            'volume_extent': np.asarray(self.v_res) * self.v_spacing,
+            'detector_extent': np.asarray(self.p_res) * self.p_spacing,
+            'detector_resolution': np.asarray(self.p_res),
+            'DSO': np.float32(self.DSO), 'DSD': np.float32(self.DSD),
+            'scanner_origin_offset': self.scanner_origin_offset,
+            'detector_offset': self.detector_offset,
+        }
 
     def project(self, points, angle):
         # points: [N, 3] ranging from [0, 1]

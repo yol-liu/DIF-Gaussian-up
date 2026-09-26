@@ -6,6 +6,10 @@ from models.base import Recon_base
 from models.utils import query_view_feats, MLP_1d
 from models.gs_utils import query_gs, build_covariance
 from models.view_fusion import GeometryAwareViewFusion
+from models.anatomy import AnatomySupportEncoder, structure_loss
+from models.multiview_encoder import MultiViewGeometryEncoder, GeometryPointFusion
+from config_schema import resolve_transformer_config
+from geometry_adapter import GeometryAdapter, aligned_anchor_features
 
 
 
@@ -19,10 +23,13 @@ class DIF_Gaussian(Recon_base):
         # fusion configuration (missing keys default to the legacy max-pooling model)
         self.anchor_fusion = self.cfg.get('anchor_fusion', 'max')
         self.point_fusion = self.cfg.get('point_fusion', 'max')
-        assert self.anchor_fusion in ('max', 'geometry_attention'), \
+        self.mask_fov = self.cfg.get('mask_fov', True)
+        assert self.anchor_fusion in ('max', 'geometry_attention', 'geometry_transformer'), \
             f'unsupported anchor_fusion: {self.anchor_fusion}'
-        assert self.point_fusion == 'max', \
-            f'unsupported point_fusion: {self.point_fusion} (only "max" is supported in this milestone)'
+        if self.point_fusion not in ('max', 'geometry_attention'):
+            raise ValueError(f'unsupported point_fusion: {self.point_fusion}')
+        if self.point_fusion == 'geometry_attention' and self.anchor_fusion != 'geometry_transformer':
+            raise ValueError('Point geometry_attention requires geometry_transformer anchors')
 
         # gaussians-related modules
         mid_ch = self.image_encoder.out_ch
@@ -60,6 +67,18 @@ class DIF_Gaussian(Recon_base):
             self.min_train_views = vf_cfg.get('min_train_views', 2)
 
         self.init_decoder(mid_ch * 2)
+        anatomy_cfg = self.cfg.get('anatomy', {})
+        if anatomy_cfg.get('enabled', False):
+            if self.cfg.get('latent', {}).get('use_latent', False):
+                raise ValueError('Anatomy arms must first be evaluated without latent')
+            self.anatomy_encoder = AnatomySupportEncoder(ds_ch, mid_ch, gs_cfg.res, anatomy_cfg)
+        if self.anchor_fusion == 'geometry_transformer':
+            if self.cfg.get('latent', {}).get('use_latent', False) or anatomy_cfg.get('enabled', False):
+                raise ValueError('Transformer supports model.probabilistic; legacy latent/older anatomy are disabled')
+            self.transformer_config = resolve_transformer_config(self.cfg.get('multiview_transformer', {}))
+            self.multiview_encoder = MultiViewGeometryEncoder(ds_ch, gs_cfg.res, self.transformer_config)
+            if self.point_fusion == 'geometry_attention':
+                self.point_view_fusion = GeometryPointFusion(mid_ch, self.transformer_config)
         self.registered_point_keys = ['points', 'points_proj']
 
     def sample_view_mask(self, batch_size, n_views, device):
@@ -75,14 +94,43 @@ class DIF_Gaussian(Recon_base):
                 keep[b, revive] = True
         return keep
 
+    def prepare_views(self, data):
+        if 'view_mask' in data:
+            valid = data['view_mask'].bool()
+            if valid.shape != data['projs'].shape[:2]:
+                raise ValueError('view_mask must match projection batch and view dimensions')
+            if self.training and not valid.any(-1).all():
+                raise ValueError('Training sampler must provide at least one valid view per case')
+            if self.training and self.view_dropout > 0:
+                keep = valid & (torch.rand_like(valid.float()) >= self.view_dropout)
+                for batch_index in range(valid.shape[0]):
+                    minimum = min(self.min_train_views, int(valid[batch_index].sum()))
+                    candidates = (valid[batch_index] & ~keep[batch_index]).nonzero().flatten()
+                    needed = max(0, minimum - int(keep[batch_index].sum()))
+                    keep[batch_index, candidates[torch.randperm(len(candidates), device=valid.device)[:needed]]] = True
+                valid = keep
+            return dict(data, view_mask=valid)
+        if not self.training or self.view_dropout <= 0:
+            return data
+        count = data['projs'].shape[1]
+        keep = self.sample_view_mask(1, count, data['projs'].device)[0]
+        return {
+            key: value[:, keep] if key in (
+                'projs', 'angles', 'points_proj', 'points_gs_proj', 'view_ids'
+            ) else value
+            for key, value in data.items()
+        }
+
     def encode_projs(self, data):
-        encoder_output = self.image_encoder(data['projs'])
+        encoder_kwargs = {}
+        if 'view_mask' in data:
+            encoder_kwargs['view_mask'] = data['view_mask']
+        if self.anchor_fusion == 'geometry_transformer':
+            encoder_kwargs['return_pyramid'] = True
+        encoder_output = self.image_encoder(data['projs'], **encoder_kwargs)
 
         if self.anchor_fusion == 'geometry_attention':
-            view_mask = None
-            if self.training and self.view_dropout > 0:
-                B, M = data['projs'].shape[:2]
-                view_mask = self.sample_view_mask(B, M, data['projs'].device)
+            view_mask = data.get('view_mask')
             p_feats, _ = self.anchor_view_fusion(
                 view_feats=encoder_output['feats_ds'],
                 points_proj=data['points_gs_proj'],
@@ -91,11 +139,33 @@ class DIF_Gaussian(Recon_base):
                 view_mask=view_mask,
             )
         else:
-            p_feats = query_view_feats(
-                view_feats=encoder_output['feats_ds'],
-                points_proj=data['points_gs_proj'],
-                fusion='max'
-            )
+            anchor_coordinates = data['points_gs_proj']
+            if self.anchor_fusion == 'geometry_transformer':
+                anchor_coordinates = GeometryAdapter(data).project(data['points_gs'])['uv']
+            token_init = self.transformer_config['token_init'] if self.anchor_fusion == 'geometry_transformer' else 'max'
+            if self.anchor_fusion == 'geometry_transformer' and self.transformer_config['coordinate_mode'] == 'aligned':
+                p_feats = aligned_anchor_features(
+                    encoder_output['feats_ds'], GeometryAdapter(data).project(data['points_gs']),
+                    data['projs'].shape[-2:], 16, token_init)
+            else:
+                p_feats = query_view_feats(
+                    view_feats=encoder_output['feats_ds'],
+                    points_proj=anchor_coordinates,
+                    fusion=token_init,
+                    mask_fov=self.mask_fov,
+                    view_mask=data.get('view_mask'),
+                )
+
+        auxiliary = {}
+        if self.anchor_fusion == 'geometry_transformer':
+            p_feats, auxiliary = self.multiview_encoder(encoder_output, p_feats, data)
+            if self.point_fusion == 'geometry_attention':
+                auxiliary['point_feature_maps'] = self.point_view_fusion.prepare(encoder_output['feats'])
+        if hasattr(self, 'anatomy_encoder'):
+            p_feats, tensor = self.anatomy_encoder(p_feats, encoder_output, data)
+            if self.training and data.get('auxiliary_supervision', True) and self.anatomy_encoder.arm in ('Gaux', 'Ganat'):
+                auxiliary['structure_loss'] = structure_loss(
+                    tensor, data['structure_target'], data['structure_confidence'])
 
         # features
         gs_feats = self.gs_feats_mlp(p_feats)
@@ -130,12 +200,16 @@ class DIF_Gaussian(Recon_base):
         r = gs_params[:, 6:, :].transpose(1, 2) # [B, K, 4]
 
         # convariance matrix, det/inv
-        Cov = build_covariance(s, r, jitter=self.gs_covariance_jitter) # [B, K, 3, 3]
-        det = torch.linalg.det(Cov)  # [B, K]
-        inv = torch.linalg.inv(Cov)  # [B, K, 3, 3]
-        _, log_det = torch.linalg.slogdet(Cov) # [B, K], stable log|Cov|
+        with torch.autocast(device_type=s.device.type, enabled=False):
+            stable_scales = s.float() if s.dtype in (torch.float16, torch.bfloat16) else s
+            stable_rotation = r.to(stable_scales.dtype)
+            Cov = build_covariance(stable_scales, stable_rotation, jitter=self.gs_covariance_jitter)
+            det = torch.linalg.det(Cov)
+            inv = torch.linalg.inv(Cov)
+            _, log_det = torch.linalg.slogdet(Cov)
 
         return {
+            **auxiliary,
             'feats_proj': encoder_output['feats'],
             # fused per-anchor features before GS MLPs (shared conditioning trunk
             # for any optional latent prior/posterior; ignored by deterministic path)
@@ -153,11 +227,13 @@ class DIF_Gaussian(Recon_base):
         # 1. multi-view pixel-aligned features + max-pooling
         # (dense query points keep max fusion in this milestone; full
         # cross-attention over ~256^3 points would be prohibitively expensive)
-        p_feats = query_view_feats(
-            view_feats=feats_dict['feats_proj'], 
-            points_proj=data['points_proj'],
-            fusion='max'
-        )
+        if self.point_fusion == 'max':
+            point_coordinates = data['points_proj']
+            if self.anchor_fusion == 'geometry_transformer':
+                point_coordinates = GeometryAdapter(data).project(data['points'])['uv']
+            p_feats = query_view_feats(
+                view_feats=feats_dict['feats_proj'], points_proj=point_coordinates,
+                fusion='max', mask_fov=self.mask_fov, view_mask=data.get('view_mask'))
 
         # 2. gaussian-based interp
         interp_feats = query_gs(
@@ -169,6 +245,9 @@ class DIF_Gaussian(Recon_base):
             normalize_weights=self.gs_normalize_weights,
         )
         interp_feats = self.gs_act(interp_feats)
+        if self.point_fusion == 'geometry_attention':
+            p_feats = self.point_view_fusion(feats_dict['feats_proj'], feats_dict['point_feature_maps'], interp_feats, data)
+            feats_dict['diagnostics'].update(self.point_view_fusion.last_diagnostics)
         p_feats = torch.cat([p_feats, interp_feats], dim=1)
 
         # 3. point-wise prediction

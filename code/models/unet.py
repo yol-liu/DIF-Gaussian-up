@@ -45,11 +45,27 @@ class UNet(nn.Module):
     def ds_ch(self):
         return self._ds_ch
 
-    def forward(self, x):
+    def forward(self, x, view_mask=None, return_pyramid=False):
         # x: [B, M, C, W, H], M: the number of views
         # outputs: [B, M, C', W', H']
         b, m = x.shape[:2]
         x = x.reshape(b * m, *x.shape[2:])
+        indices = None
+        if view_mask is not None:
+            if view_mask.shape != (b, m):
+                raise ValueError('view_mask must have shape [B,V]')
+            valid = view_mask.bool()
+            if self.training and not valid.any(-1).all():
+                raise ValueError('Training cases must have at least one valid view')
+            indices = valid.flatten().nonzero(as_tuple=False).flatten()
+            if indices.numel() == 0:
+                result = {'feats': x.new_zeros(b, m, self.out_ch, *x.shape[-2:]),
+                          'feats_ds': x.new_zeros(b, m, self.ds_ch, x.shape[-2] // 16, x.shape[-1] // 16)}
+                if return_pyramid:
+                    result['pyramid'] = {stride: x.new_zeros(b, m, channels, x.shape[-2] // stride, x.shape[-1] // stride)
+                                         for stride, channels in ((4, 256), (8, 512), (16, 1024))}
+                return result
+            x = x.index_select(0, indices)
 
         x1 = self.inc(x)
 
@@ -64,10 +80,15 @@ class UNet(nn.Module):
             x = conv(x, xs[-(2 + i)])
 
         y = self.outc(x)
-        return {
-            'feats': y.reshape(b, m, *y.shape[1:]), 
-            'feats_ds': ds_x.reshape(b, m, *ds_x.shape[1:])
-        }
+        def restore_views(features):
+            if indices is not None:
+                features = features.new_zeros(b * m, *features.shape[1:]).index_copy(0, indices, features)
+            return features.reshape(b, m, *features.shape[1:])
+
+        result = {'feats': restore_views(y), 'feats_ds': restore_views(ds_x)}
+        if return_pyramid:
+            result['pyramid'] = {4: restore_views(xs[2]), 8: restore_views(xs[3]), 16: restore_views(xs[4])}
+        return result
 
 
 class DoubleConv(nn.Module):

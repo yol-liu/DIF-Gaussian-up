@@ -28,7 +28,7 @@ def index_2d(feat, uv):
     return samples[:, :, :, 0] # [B, C, N]
 
 
-def query_view_feats(view_feats, points_proj, fusion='max'):
+def query_view_feats(view_feats, points_proj, fusion='max', mask_fov=False, view_mask=None):
     # view_feats: [B, M, C, H, W]
     # points_proj: [B, M, N, 2]
     # output: [B, C, N, M]
@@ -37,12 +37,25 @@ def query_view_feats(view_feats, points_proj, fusion='max'):
     for i in range(n_view):
         feat = view_feats[:, i, ...] # B, C, W, H
         p = points_proj[:, i, ...] # B, N, 2
-        p_feats = index_2d(feat, p) # B, C, N
+        p_feats = index_2d(feat, torch.nan_to_num(p, nan=2., posinf=2., neginf=-2.))
         p_feats_list.append(p_feats)
     p_feats = torch.stack(p_feats_list, dim=-1) # B, C, N, M
     if fusion == 'max':
-        p_feats = F.max_pool2d(p_feats, (1, p_feats.shape[-1]))
-        p_feats = p_feats.squeeze(-1) # [B, C, K]
+        if mask_fov or view_mask is not None:
+            valid = (torch.isfinite(points_proj) & (points_proj.abs() <= 1)).all(-1) if mask_fov else torch.ones_like(points_proj[..., 0], dtype=torch.bool)
+            if view_mask is not None:
+                valid = valid & view_mask.bool().unsqueeze(-1)
+            valid = valid.permute(0, 2, 1).unsqueeze(1)
+            p_feats = p_feats.masked_fill(~valid, torch.finfo(p_feats.dtype).min)
+            p_feats = p_feats.max(-1).values.masked_fill(~valid.any(-1), 0.)
+        else:
+            p_feats = p_feats.max(-1).values
+    elif fusion == 'mean':
+        valid = (torch.isfinite(points_proj) & (points_proj.abs() <= 1)).all(-1) if mask_fov else torch.ones_like(points_proj[..., 0], dtype=torch.bool)
+        if view_mask is not None:
+            valid = valid & view_mask.bool().unsqueeze(-1)
+        valid = valid.permute(0, 2, 1).unsqueeze(1).to(p_feats.dtype)
+        p_feats = (p_feats * valid).sum(-1) / valid.sum(-1).clamp_min(1.)
     elif fusion is not None:
         raise NotImplementedError
     return p_feats

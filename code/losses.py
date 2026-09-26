@@ -13,7 +13,6 @@ from typing import Dict, Optional
 import torch
 import torch.nn.functional as F
 
-from models.latent_np import apply_free_bits, gaussian_kl
 
 
 def volume_nll(pred, target, likelihood='laplace', sigma=0.1):
@@ -26,6 +25,8 @@ def volume_nll(pred, target, likelihood='laplace', sigma=0.1):
     '''
     assert sigma > 0
     diff = pred - target
+    if likelihood == 'mse':
+        return diff.square().mean()
     if likelihood == 'laplace':
         nll = diff.abs() / sigma + math.log(2.0 * sigma)
     elif likelihood == 'gaussian':
@@ -52,7 +53,8 @@ def elbo_loss(
     '''
     Returns (total_loss, metrics_dict).
     '''
-    likelihood = latent_cfg.get('volume_likelihood', 'laplace')
+    from models.latent_np import apply_free_bits, gaussian_kl
+    likelihood = latent_cfg.get('reconstruction_loss', 'mse')
     sigma = float(latent_cfg.get('volume_sigma', 0.1))
     lambda_v = float(latent_cfg.get('lambda_v', 1.0))
     beta_g = float(latent_cfg.get('beta_g', 1e-3))
@@ -87,6 +89,7 @@ def elbo_loss(
         'loss': loss.detach(),
         'L_volume': L_vol.detach(),
         'KL_global': KL_g.detach(),
+        'KL_global_raw': kl_g_per_dim.sum(-1).mean().detach(),
         'KL_local': KL_l.detach() if torch.is_tensor(KL_l) else torch.tensor(0.0),
         'beta_scale': warm,
         'kl_g_per_dim': kl_g_per_dim.detach(),
@@ -147,51 +150,61 @@ def compute_collapse_diagnostics(
     - KL per group / active units
     - prior/posterior variance means
     '''
-    was_training = model.training
+    if hasattr(model, 'probability'):
+        from probabilistic_diagnostics import probability_diagnostics
+        return probability_diagnostics(model, data, num_samples, eval_npoint)
+    from models.latent_np import apply_free_bits, gaussian_kl
+    from checkpoints import rng_state, restore_rng
+    saved_rng = rng_state()
+    modes = [(module, module.training) for module in model.modules()]
     model.eval()
-
-    out = model(
-        data,
-        is_eval=True,
-        eval_npoint=eval_npoint,
-        sample_from='prior',
-        num_samples=num_samples,
-    )
-    vols = out['points_pred']  # [S, B, C, N]
-    diversity = sample_diversity(vols, metric=diversity_metric)
-
-    # one posterior-free prior state for variance / (optional) KL==0 check
-    state = out['states'][0] if 'states' in out else out['state']
-    kl_info = state.kl_info
-    diag = {
-        'sample_diversity': float(diversity.item()),
-        'prior_var_g_mean': float(kl_info['logvar_p_g'].exp().mean().item()),
-        'post_var_g_mean': float(kl_info['logvar_q_g'].exp().mean().item()),
-    }
-
-    # KL with q=p under prior sampling path (should be ~0); still useful shape check
-    kl_g = gaussian_kl(
-        kl_info['mu_q_g'], kl_info['logvar_q_g'],
-        kl_info['mu_p_g'], kl_info['logvar_p_g'],
-    )
-    n_active, _ = active_latent_units(kl_g, threshold=active_threshold)
-    diag['KL_global_raw'] = float(kl_g.sum(dim=-1).mean().item())
-    diag['active_units_g'] = n_active
-
-    if 'logvar_p_l' in kl_info:
-        diag['prior_var_l_mean'] = float(kl_info['logvar_p_l'].exp().mean().item())
-        diag['post_var_l_mean'] = float(kl_info['logvar_q_l'].exp().mean().item())
-        kl_l = gaussian_kl(
-            kl_info['mu_q_l'], kl_info['logvar_q_l'],
-            kl_info['mu_p_l'], kl_info['logvar_p_l'],
-        ).mean(dim=(2, 3, 4))
-        n_active_l, _ = active_latent_units(kl_l, threshold=active_threshold)
-        diag['KL_local_raw'] = float(kl_l.sum(dim=-1).mean().item())
-        diag['active_units_l'] = n_active_l
-
-    if was_training:
-        model.train()
-    return diag
+    try:
+        if num_samples < 2:
+            raise ValueError('diversity diagnostics require at least two samples')
+        if data.get('gt_volume') is None:
+            return {'posterior_available': False, 'USES_GT': False,
+                    'KL_global_raw': None, 'active_units_g': None}
+        posterior = model.encode_and_sample(
+            data, gt_volume=data.get('gt_volume'), sample_from='posterior_mean'
+        )
+        prior = model.encode_and_sample(data, sample_from='mean')
+        out = model(data, is_eval=True, eval_npoint=eval_npoint,
+                    sample_from='prior', num_samples=num_samples)
+        info = posterior.kl_info
+        diag = {'USES_GT': True, 'sample_diversity': float(
+            sample_diversity(out['sample_predictions'], metric=diversity_metric))}
+        diag['prior_posterior_output_l1'] = float((
+            model._decode_chunked(data, posterior, eval_npoint)
+            - model._decode_chunked(data, prior, eval_npoint)).abs().mean())
+        latent_cfg = model.cfg.get('latent', {})
+        for group, label in [('g', 'global'), ('l', 'local')]:
+            if f'mu_q_{group}' not in info:
+                continue
+            per_dim = gaussian_kl(info[f'mu_q_{group}'], info[f'logvar_q_{group}'],
+                                  info[f'mu_p_{group}'], info[f'logvar_p_{group}'])
+            if per_dim.ndim == 5:
+                per_dim = per_dim.mean((2, 3, 4))
+            diag[f'KL_{label}_raw'] = float(per_dim.sum(-1).mean())
+            diag[f'KL_{label}_freebits_penalty'] = float(apply_free_bits(
+                per_dim, latent_cfg.get(f'free_bits_{group}', 0.)))
+            diag[f'kl_{group}_per_dim'] = per_dim.mean(0).tolist()
+            diag[f'active_units_{group}'] = active_latent_units(per_dim, active_threshold)[0]
+            for prefix, distribution in [('prior', 'p'), ('post', 'q')]:
+                logvar = info[f'logvar_{distribution}_{group}']
+                diag[f'{prefix}_variance_{group}_mean'] = float(logvar.exp().mean())
+                diag[f'{prefix}_std_{group}_mean'] = float((0.5 * logvar).exp().mean())
+        conditioning = posterior.z_g
+        if model.use_local:
+            local = model.local_latent.interpolate_to_anchors(posterior.z_grid, data['points_gs'])
+            conditioning = torch.cat([conditioning[:, None].expand(-1, local.shape[1], -1), local], -1)
+        gamma, shift = model.feature_film.net(conditioning).chunk(2, -1)
+        diag['film_gamma_abs_mean'] = float(gamma.abs().mean())
+        diag['film_shift_abs_mean'] = float(shift.abs().mean())
+        return diag
+    finally:
+        for module, training in modes:
+            module.training = training
+        restore_rng(saved_rng)
 
 
 def metrics_to_wandb(metrics: Dict, prefix='train'):
@@ -200,7 +213,7 @@ def metrics_to_wandb(metrics: Dict, prefix='train'):
     for k, v in metrics.items():
         if k.endswith('_per_dim') or k.startswith('logvar_'):
             if k.startswith('logvar_') and torch.is_tensor(v):
-                log[f'{prefix}/{k}_mean'] = float(v.exp().mean().item())
+                log[f'{prefix}/{k.replace("logvar_", "variance_")}_mean'] = float(v.exp().mean().item())
             continue
         if torch.is_tensor(v):
             log[f'{prefix}/{k}'] = float(v.item()) if v.numel() == 1 else float(v.mean().item())

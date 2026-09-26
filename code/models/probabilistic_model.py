@@ -22,6 +22,7 @@ from models.latent_np import (
     gaussian_kl,
 )
 from models.gt_encoder import GTEncoder
+from models.factory import build_model  # Backward-compatible import for existing experiments.
 
 
 @dataclass
@@ -33,18 +34,6 @@ class SampleState:
     z_grid: Optional[torch.Tensor] = None
     # variational diagnostics (detached where appropriate)
     kl_info: Dict[str, Any] = field(default_factory=dict)
-
-
-def build_model(cfg):
-    '''Factory: probabilistic model only when latent.use_latent is true.'''
-    latent_cfg = cfg.get('latent', {}) if hasattr(cfg, 'get') else getattr(cfg, 'latent', {})
-    if isinstance(latent_cfg, dict):
-        use_latent = latent_cfg.get('use_latent', False)
-    else:
-        use_latent = getattr(latent_cfg, 'use_latent', False)
-    if use_latent:
-        return ProbabilisticDIFGaussian(cfg)
-    return DIF_Gaussian(cfg)
 
 
 class ProbabilisticDIFGaussian(DIF_Gaussian):
@@ -100,6 +89,9 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
                 grid_res=self.grid_res,
                 prior_sigma_floor=self.prior_sigma_floor,
             )
+            self.local_latent.coordinate_convention = latent_cfg.get('local_coordinates', 'cell_centers')
+            if self.local_latent.coordinate_convention not in ('cell_centers', 'legacy'):
+                raise ValueError('Unknown local latent coordinate convention')
             film_in = self.global_dim + self.local_dim
 
         self.feature_film = FeatureFiLM(
@@ -128,8 +120,10 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
         num_samples > 1 returns a list of SampleState (one encode, S samples).
         '''
         sample_from = sample_from or self.default_sample_from
-        assert sample_from in ('prior', 'posterior', 'mean'), \
+        assert sample_from in ('prior', 'posterior', 'mean', 'posterior_mean'), \
             f'unknown sample_from: {sample_from}'
+        if num_samples < 1:
+            raise ValueError('num_samples must be positive')
 
         feats_dict = self.encode_projs(data)
         if not self.use_latent:
@@ -146,7 +140,7 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
         # GT features for posterior (training only)
         gt_global_feat = None
         gt_anchor_feat = None
-        if sample_from == 'posterior':
+        if sample_from in ('posterior', 'posterior_mean'):
             if gt_volume is None:
                 raise ValueError('sample_from="posterior" requires gt_volume')
             gt_out = self.gt_encoder(
@@ -156,7 +150,7 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
             gt_anchor_feat = gt_out['gt_anchor_feat']
 
         mu_p_g, logvar_p_g = self.global_latent.prior(global_ctx)
-        if sample_from == 'posterior':
+        if sample_from in ('posterior', 'posterior_mean'):
             mu_q_g, logvar_q_g = self.global_latent.posterior(
                 global_ctx, gt_global_feat
             )
@@ -175,6 +169,8 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
         for _ in range(num_samples):
             if sample_from == 'mean':
                 z_g = mu_p_g
+            elif sample_from == 'posterior_mean':
+                z_g = mu_q_g
             elif sample_from == 'posterior':
                 z_g = self.global_latent.sample(mu_q_g, logvar_q_g)
             else:
@@ -185,7 +181,7 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
             if self.use_local:
                 # top-down: local prior/posterior conditioned on this z_g
                 mu_p_l, logvar_p_l = self.local_latent.prior(z_g, grid_ctx)
-                if sample_from == 'posterior':
+                if sample_from in ('posterior', 'posterior_mean'):
                     gt_grid = self.local_latent.pool_anchors_to_grid(
                         gt_anchor_feat, data['points_gs']
                     )
@@ -197,6 +193,8 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
 
                 if sample_from == 'mean':
                     z_grid = mu_p_l
+                elif sample_from == 'posterior_mean':
+                    z_grid = mu_q_l
                 elif sample_from == 'posterior':
                     z_grid = self.local_latent.sample(mu_q_l, logvar_q_l)
                 else:
@@ -222,16 +220,16 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
             kl_info = {
                 'mu_p_g': mu_p_g,
                 'logvar_p_g': logvar_p_g,
-                'mu_q_g': mu_q_g,
-                'logvar_q_g': logvar_q_g,
             }
+            if sample_from in ('posterior', 'posterior_mean'):
+                kl_info.update(mu_q_g=mu_q_g, logvar_q_g=logvar_q_g)
             if self.use_local:
                 kl_info.update({
                     'mu_p_l': mu_p_l,
                     'logvar_p_l': logvar_p_l,
-                    'mu_q_l': mu_q_l,
-                    'logvar_q_l': logvar_q_l,
                 })
+                if sample_from in ('posterior', 'posterior_mean'):
+                    kl_info.update(mu_q_l=mu_q_l, logvar_q_l=logvar_q_l)
 
             states.append(SampleState(
                 feats_proj=feats_dict['feats_proj'],
@@ -261,50 +259,81 @@ class ProbabilisticDIFGaussian(DIF_Gaussian):
         )
 
     def forward(self, data, is_eval=False, eval_npoint=100000,
-                gt_volume=None, sample_from=None, num_samples=1):
+                gt_volume=None, sample_from=None, num_samples=None,
+                latent_mode=None, return_debug=False, oracle=False):
         if not self.use_latent:
             return super().forward(data, is_eval=is_eval, eval_npoint=eval_npoint)
 
-        # inference samples the conditional prior; 'mean' is for ablation
+        data = self.prepare_views(data)
+        sampling = self.cfg.get('sampling', {})
+        num_samples = num_samples if num_samples is not None else sampling.get('num_samples', 1)
+        if is_eval and sample_from is None:
+            latent_mode = latent_mode or sampling.get('eval_mode', 'prior_mean')
+        if latent_mode is not None:
+            modes = {'prior_mean': 'mean', 'prior_sample': 'prior',
+                     'prior_latent_mean': 'mean', 'prior_mc_mean': 'prior',
+                     'posterior_mean_oracle': 'posterior_mean', 'gt_posterior_mean': 'posterior_mean',
+                     'gt_posterior_sample': 'posterior'}
+            if latent_mode not in modes:
+                raise ValueError(f'unknown latent_mode: {latent_mode}')
+            sample_from = modes[latent_mode]
+            if latent_mode != 'prior_mc_mean':
+                num_samples = 1
+        if num_samples < 1:
+            raise ValueError('num_samples must be positive')
         sample_from = sample_from or (
             'prior' if is_eval else self.default_sample_from
         )
-        if is_eval and sample_from == 'posterior':
-            sample_from = 'prior'
+        if is_eval and sample_from in ('posterior', 'posterior_mean') and not oracle:
+            raise ValueError('Posterior deployment request requires explicit oracle=True')
 
         if not is_eval:
-            state = self.encode_and_sample(
-                data, gt_volume=gt_volume, sample_from=sample_from, num_samples=1
+            states = self.encode_and_sample(
+                data, gt_volume=gt_volume, sample_from=sample_from, num_samples=num_samples
             )
-            pred = self.decode(data, state)
-            return {
-                'points_pred': pred,
-                'state': state,
+            states = states if isinstance(states, list) else [states]
+            state = states[0]
+            samples = torch.stack([self.decode(data, sampled) for sampled in states])
+            result = {
+                'points_pred': samples.mean(0),
+                'sample_predictions': samples,
                 'kl_info': state.kl_info,
+                'kl_infos': [sampled.kl_info for sampled in states],
             }
+            if return_debug:
+                result['state'] = state
+            return result
 
         # eval: encode once, decode in chunks sharing state
         if num_samples > 1:
             states = self.encode_and_sample(
-                data, gt_volume=None, sample_from=sample_from, num_samples=num_samples
+                data, gt_volume=gt_volume, sample_from=sample_from, num_samples=num_samples
             )
             preds = []
             for state in states:
                 preds.append(self._decode_chunked(data, state, eval_npoint))
+            stacked = torch.stack(preds, dim=0)
             return {
-                'points_pred': torch.stack(preds, dim=0),  # [S, B, C, N]
+                'points_pred': stacked.mean(0),
+                'sample_predictions': stacked,
+                'predictive_var_latent': stacked.var(0),
                 'states': states,
             }
 
         state = self.encode_and_sample(
-            data, gt_volume=None, sample_from=sample_from, num_samples=1
+            data, gt_volume=gt_volume, sample_from=sample_from, num_samples=1
         )
+        prediction = self._decode_chunked(data, state, eval_npoint)
         return {
-            'points_pred': self._decode_chunked(data, state, eval_npoint),
+            'points_pred': prediction,
+            'sample_predictions': prediction.unsqueeze(0),
+            'predictive_var_latent': None,
             'state': state,
         }
 
     def _decode_chunked(self, data, state, eval_npoint):
+        if eval_npoint < 1:
+            raise ValueError('eval_npoint must be positive')
         total_npoint = data['points_proj'].shape[2]
         n_batch = int(np.ceil(total_npoint / eval_npoint))
         pred_list = []

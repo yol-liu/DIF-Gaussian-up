@@ -1,0 +1,38 @@
+execution:
+  seed: 0
+  total_gpu_hours: 4.0
+  max_concurrent_gpu_runs: 1
+  smoke_steps: 100
+  overfit_steps: 500
+  pilot_steps: 1000
+  val_case_count: 6
+  run_formal_training: false
+  checkpoint_policy: inherit_project
+  device: cpu
+data:
+  root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
+  dataset: LUNA16
+  num_views: 6
+  split: eval
+model:
+  base_config: configs/default.yaml
+  checkpoint: null
+evaluation:
+  primary_scale: 1.0
+  diagnostic_scales: [0.5, 1.0]
+  resampling_protocol: legacy
+  latent_modes: [prior_mean, prior_sample, prior_mc_mean]
+  mc_samples: 4
+  posterior_oracle_diagnostics: true
+  save_float_predictions_for_selected_cases: true
+  chunk_size: 10000
+research:
+  gaussian_changes: isolated
+  geometry_arms: [G0, Gfree, Ggeo, Gaux, Ganat]
+  footprint_samples_per_scale: 5
+  use_structure_target_as_encoder_input: false
+  enable_ray_loss_after_calibration: true
+  initial_rays_per_step: 512
+  deterministic_distillation_before_probabilistic: true
+  probabilistic_training_requires_teacher_distribution: true
+  pilot_arms: [B_head, B_mask]

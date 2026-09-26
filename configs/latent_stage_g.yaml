@@ -45,7 +45,7 @@ model:
     free_bits_l: 0.1
     kl_warmup_steps: 20000
     prior_sigma_floor: 1.0e-2
-    volume_likelihood: laplace
+    volume_likelihood: laplace  # legacy checkpoint metadata; loss below controls training
     volume_sigma: 0.1
     lambda_v: 1.0
     gt_feat_ch: 32
@@ -56,3 +56,7 @@ model:
 dataset:
   root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
   gs_res: 12
+
+# Historical Stage G compatibility; explicit common reconstruction objective.
+loss:
+  reconstruction_loss: mse

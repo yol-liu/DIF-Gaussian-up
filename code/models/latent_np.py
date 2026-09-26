@@ -13,10 +13,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def reparameterize(mu, logvar):
+def reparameterize(mu, logvar, generator=None):
     # mu, logvar: [..., D]
     std = torch.exp(0.5 * logvar)
-    eps = torch.randn_like(std)
+    eps = torch.randn(std.shape, dtype=std.dtype, device=std.device, generator=generator)
     return mu + eps * std
 
 
@@ -25,11 +25,36 @@ def gaussian_kl(mu_q, logvar_q, mu_p, logvar_p):
     KL(q || p) for diagonal Gaussians, per-dimension.
     returns: same shape as mu_q (elementwise KL contribution)
     '''
+    # Keep exponentials and cancellation out of FP16/BF16 under autocast.
+    mu_q, logvar_q, mu_p, logvar_p = [
+        value.float() if value.dtype in (torch.float16, torch.bfloat16) else value
+        for value in (mu_q, logvar_q, mu_p, logvar_p)]
     return 0.5 * (
         logvar_p - logvar_q
         + (torch.exp(logvar_q) + (mu_q - mu_p).pow(2)) / torch.exp(logvar_p)
         - 1.0
     )
+
+
+class BoundedGaussianHead(nn.Module):
+    """Independent diagonal Gaussian statistics; scales are latent standard deviations."""
+
+    def __init__(self, in_dim, latent_dim, sigma_min=.001, sigma_max=3., initial_sigma=.5):
+        super().__init__()
+        if not 0 < sigma_min < initial_sigma < sigma_max:
+            raise ValueError('Require 0 < sigma_min < initial_sigma < sigma_max')
+        self.sigma_min, self.sigma_max = sigma_min, sigma_max
+        self.net = nn.Sequential(nn.Linear(in_dim, 128), nn.SiLU(), nn.Linear(128, 2 * latent_dim))
+        with torch.no_grad():
+            self.net[-1].weight[latent_dim:].zero_()
+            fraction = (initial_sigma - sigma_min) / (sigma_max - sigma_min)
+            self.net[-1].bias[latent_dim:].fill_(math.log(fraction / (1 - fraction)))
+
+    def forward(self, features):
+        mu, raw = self.net(features).chunk(2, -1)
+        raw = raw.float() if raw.dtype in (torch.float16, torch.bfloat16) else raw
+        sigma = self.sigma_min + (self.sigma_max - self.sigma_min) * raw.sigmoid()
+        return mu, 2 * sigma.log()
 
 
 def apply_free_bits(kl_per_dim, free_bits):
@@ -236,7 +261,8 @@ class LocalLatentGrid(nn.Module):
             [grid[..., 2], grid[..., 1], grid[..., 0]], dim=-1
         )
         sampled = F.grid_sample(
-            z_grid, grid_zyx, mode='bilinear', align_corners=True, padding_mode='border'
+            z_grid, grid_zyx, mode='bilinear',
+            align_corners=getattr(self, 'coordinate_convention', 'cell_centers') == 'legacy', padding_mode='border'
         )  # [B, D, K, 1, 1]
         return sampled[:, :, :, 0, 0].transpose(1, 2)  # [B, K, D]
 

@@ -1,0 +1,50 @@
+model:
+  image_encoder:
+    out_ch: 128
+  point_decoder:
+    mlp_chs:
+    - 256
+    - 64
+    - 16
+    - 1
+    legacy_head: false
+  gs:
+    t: 512
+    res: 12
+    p_dist_scaling: 1.0
+    o_scaling: 1.0
+    s_scaling: 0.3
+  latent:
+    use_latent: false
+    global_dim: 64
+    use_local: false
+    local_dim: 16
+    grid_res: 4
+    beta_g: 0.001
+    beta_l: 0.01
+    free_bits_g: 0.5
+    free_bits_l: 0.1
+    kl_warmup_steps: 20000
+    prior_sigma_floor: 0.01
+    volume_likelihood: laplace
+    volume_sigma: 0.1
+    lambda_v: 1.0
+    gt_feat_ch: 32
+  sampling:
+    sample_from: posterior
+    num_samples: 4
+    eval_mode: prior_mean
+  mask_fov: true
+  anatomy:
+    enabled: true
+    arm: Ggeo
+    hidden_dim: 32
+    length_mm: 3.2
+    kappa: 4.0
+    loss_weight: 0.01
+dataset:
+  root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
+  gs_res: 12
+  structure_supervision: false
+loss:
+  reconstruction_loss: mse

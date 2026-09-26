@@ -156,7 +156,8 @@ class GeometryAwareViewFusion(nn.Module):
 
         # 2. per-token geometry features
         uv = points_proj.permute(0, 2, 1, 3)  # [B, N, M, 2]
-        in_fov = (uv.abs() <= 1.0).all(dim=-1)  # [B, N, M] bool
+        in_fov = (torch.isfinite(uv) & (uv.abs() <= 1.0)).all(dim=-1)
+        uv = torch.nan_to_num(uv, nan=2., posinf=2., neginf=-2.)
         sin_cos = torch.stack([torch.sin(angles), torch.cos(angles)], dim=-1)  # [B, M, 2]
         sin_cos = sin_cos.unsqueeze(1).expand(-1, N, -1, -1)  # [B, N, M, 2]
         geom = torch.cat([

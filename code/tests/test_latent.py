@@ -405,7 +405,7 @@ def test_smoke_train_global():
                     fixed, is_eval=True, sample_from='prior',
                     num_samples=4, eval_npoint=16,
                 )
-                div = sample_diversity(out['points_pred'])
+                div = sample_diversity(out['sample_predictions'])
                 diversities.append(float(div.item()))
             model.train()
 

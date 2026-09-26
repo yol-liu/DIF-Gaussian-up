@@ -14,7 +14,8 @@ import traceback
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-TEST_MODULES = ['test_gs_utils', 'test_view_fusion', 'test_model', 'test_latent']
+TEST_MODULES = ['test_gs_utils', 'test_view_fusion', 'test_model', 'test_latent', 'test_research_repairs',
+                'test_multiview_transformer', 'test_experiment_protocol', 'test_probability_repair']
 
 
 def main():

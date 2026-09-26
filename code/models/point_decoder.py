@@ -4,7 +4,7 @@ import torch.nn as nn
 
 
 class PointDecoder(nn.Module):
-    def __init__(self, channels, residual=True, use_bn=True):
+    def __init__(self, channels, residual=True, use_bn=True, legacy_head=False):
         super().__init__()
 
         self.residual = residual
@@ -17,7 +17,7 @@ class PointDecoder(nn.Module):
             else:
                 modules.append(nn.Conv1d(channels[i] + channels[0], channels[i + 1], kernel_size=1))
 
-            if i != len(channels) - 1:
+            if legacy_head or i < len(channels) - 2:
                 if use_bn:
                     modules.append(nn.BatchNorm1d(channels[i + 1]))
                 modules.append(nn.LeakyReLU(inplace=True))

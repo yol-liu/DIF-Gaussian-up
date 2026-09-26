@@ -1,0 +1,53 @@
+model:
+  image_encoder:
+    out_ch: 128
+  point_decoder:
+    mlp_chs: [256, 64, 16, 1]
+    legacy_head: false
+  mask_fov: true
+  anchor_fusion: geometry_transformer
+  point_fusion: max
+  multiview_transformer:
+    d_model: 128
+    num_heads: 4
+    num_blocks: 2
+    feature_scales: [4, 8, 16]
+    samples_per_scale: 5
+    spatial_window: 3
+    dropout: 0.0
+    anchor_chunk_size: 256
+    point_chunk_size: 8192
+    residual_init: 0.001
+    fixed_radius_pixels: 1.0
+    footprint_min_pixels: 0.25
+    footprint_max_pixels: 2.0
+    anatomy:
+      enabled: false
+      guided_sampling: false
+      length_mm: 8.0
+      kappa: 4.0
+      sigma_floor_mm: 0.25
+      warmup_steps: 100
+      loss_weight: 0.01
+  gs:
+    t: 512
+    res: 12
+    p_dist_scaling: 1.0
+    o_scaling: 1.0
+    s_scaling: 0.3
+    knn_k: 3
+    shifted_center_knn: false
+    normalize_weights: false
+    covariance_jitter: 0.0
+  latent:
+    use_latent: false
+dataset:
+  root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
+  gs_res: 12
+  structure_supervision: false
+loss:
+  reconstruction_loss: mse
+ray_consistency:
+  enabled: false
+transfer:
+  enabled: false
