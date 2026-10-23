@@ -18,6 +18,7 @@ ANCHOR_MLPS = ('gs_feats_mlp', 'gs_params_mlp')
 DEFAULTS = {
     'mode': 'dense_np', 'objective': 'joint', 'normalization': 'groupnorm',
     'film_init_std': .001, 'train_samples': 1, 'mean_code': False,
+    'posterior_decoder_views': 'dense', 'prior_reconstruction_weight': 0.1,
     'reference_checkpoint': None, 'reference_evidence': None,
     'latent': {'global_dim': 64, 'use_local': False, 'local_dim': 16, 'grid_res': 4,
                'sigma_min': .001, 'sigma_max': 3., 'initial_sigma': .5},
@@ -74,6 +75,10 @@ def resolve_probability(config):
         raise ValueError('Frozen reference requires stochastic dense_np')
     if result['mean_code'] and (result['mode'] != 'dense_np' or latent['use_local']):
         raise ValueError('Mean-code control is global dense_np only')
+    if result['posterior_decoder_views'] not in ('context', 'dense'):
+        raise ValueError('posterior_decoder_views must be context or dense')
+    if result['prior_reconstruction_weight'] < 0:
+        raise ValueError('prior_reconstruction_weight must be nonnegative')
     return result
 
 

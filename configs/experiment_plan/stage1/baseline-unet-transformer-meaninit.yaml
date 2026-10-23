@@ -54,7 +54,7 @@ model:
   latent:
     use_latent: false
 dataset:
-  root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
+  root_dir: /home/user/workspace/C2RV-CBCT/data
   gs_res: 12
   structure_supervision: false
 loss:

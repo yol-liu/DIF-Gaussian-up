@@ -1,6 +1,8 @@
 logs/
 wandb/
 nohup.out
+.conda/
+remind.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

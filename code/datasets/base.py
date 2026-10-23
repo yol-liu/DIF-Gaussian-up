@@ -42,7 +42,7 @@ class CBCT_dataset(Dataset):
             random_views=False,
             view_offset=0,
             load_gt_volume=False,
-            gt_volume_scale=0.25,
+            gt_volume_scale=1.0,
             sample_seed=None,
             load_dense=False,
             deployment_only=False,
@@ -87,6 +87,16 @@ class CBCT_dataset(Dataset):
         if split == 'train':
             # load blocks' coordinates [train only]
             self.blocks = np.load(os.path.join(self.data_root, self.info['blocks_coords']))
+            # SSIM patches need a C-order regular side^3 grid; verify once on block 0
+            if int(cfg.get('ssim_patch', 0) or 0) >= 2:
+                probe = self.blocks[0]
+                side = int(round(len(probe) ** (1. / 3)))
+                if side ** 3 != len(probe):
+                    raise ValueError(f'SSIM patch requires cubic blocks, got {len(probe)} points')
+                grid = np.mgrid[0:side, 0:side, 0:side].reshape(3, -1).T.astype(np.float32)
+                lo, hi = probe.min(0), probe.max(0)
+                if not np.allclose(probe, grid * (hi - lo) / (side - 1) + lo, atol=1e-5):
+                    raise ValueError('SSIM patch requires block coords to be a C-order regular grid')
         else:
             # prepare sampling points
             points = np.mgrid[:out_res[0], :out_res[1], :out_res[2]]
@@ -238,6 +248,7 @@ class CBCT_dataset(Dataset):
             projs, angles, view_ids = self.sample_projections(name, return_ids=True, rng=rng)
 
         # -- load sampling points
+        patch_size = 0
         if not self.is_train:
             points = self.points
             if not self.deployment_only:
@@ -251,6 +262,27 @@ class CBCT_dataset(Dataset):
             points, points_gt = self.sample_points(block_coords, block_values, rng=rng)
             points_gt = points_gt.astype(np.float32) / 255.
             points_gt = points_gt[None, :]
+
+            # -- SSIM patch: contiguous K^3 sub-cube of the block grid.
+            # SSIM needs local spatial structure; the 1024 scattered
+            # training points carry none. Block coords are a C-order
+            # regular side^3 grid (validated in __init__), so a patch is
+            # a contiguous axis-aligned sub-cube of that grid.
+            patch_size = int(self.cfg.get('ssim_patch', 0) or 0)
+            if patch_size >= 2:
+                side = int(round(len(block_coords) ** (1. / 3)))
+                if side ** 3 != len(block_coords):
+                    raise ValueError(f'SSIM patch sampling requires cubic blocks, got {len(block_coords)} points')
+                k = min(patch_size, side)
+                lo = (rng.integers(0, side - k + 1, size=3) if rng is not None
+                      else np.random.randint(0, side - k + 1, size=3))
+                axes = [np.arange(lo[a], lo[a] + k) for a in range(3)]
+                flat = (axes[0][:, None, None] * side * side
+                        + axes[1][None, :, None] * side
+                        + axes[2][None, None, :]).reshape(-1) # C-order (i, j, k)
+                patch_points = block_coords[flat].astype(np.float32)
+                patch_gt = block_values[flat].astype(np.float32) / 255.
+                patch_gt = patch_gt[None, :]
 
         # -- project points
         query_digest = None
@@ -266,6 +298,9 @@ class CBCT_dataset(Dataset):
             self.points_proj_key = cache_key
         else:
             points_proj = self.points_proj
+        patch_points_proj = None
+        if self.is_train and patch_size >= 2:
+            patch_points_proj = self.project_points(patch_points, angles) # [M, K^3, 2]
 
         # -- collect data
         ret_dict = {
@@ -282,6 +317,10 @@ class CBCT_dataset(Dataset):
         }
         if self.is_train:
             ret_dict['block_idx'] = int(b_idx)
+            if patch_size >= 2:
+                ret_dict['patch_points'] = patch_points         # [K^3, 3]
+                ret_dict['patch_points_proj'] = patch_points_proj
+                ret_dict['patch_gt'] = patch_gt                 # [1, K^3]
         if pair:
             ret_dict.update(view_mask=context_mask, dense_projs=dense_projs, dense_angles=dense_angles,
                             dense_view_ids=dense_ids, dense_view_mask=np.ones(len(dense_ids), dtype=bool),

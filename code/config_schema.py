@@ -94,7 +94,7 @@ def validate_config(config):
     for section, allowed in MODEL_KEYS.items():
         if allowed is not None and section in config['model']:
             check_keys(config['model'][section], allowed, f'model.{section}')
-    check_keys(config['dataset'], {'root_dir', 'gs_res', 'structure_supervision', 'teacher_views', 'subset_mode', 'structure_target', 'paired_views'}, 'dataset')
+    check_keys(config['dataset'], {'root_dir', 'gs_res', 'structure_supervision', 'teacher_views', 'subset_mode', 'structure_target', 'paired_views', 'ssim_patch'}, 'dataset')
     if 'probabilistic' in config['model']:
         from probabilistic_config import resolve_probability
         probability = resolve_probability(config['model']['probabilistic'])
@@ -117,7 +117,7 @@ def validate_config(config):
             raise ValueError('Each context count must satisfy 0 < C < D')
         if config['dataset'].get('teacher_views'):
             raise ValueError('paired_views and teacher_views are separate protocols')
-    check_keys(config.get('loss', {}), {'reconstruction_loss', 'volume_sigma', 'lambda_v'}, 'loss')
+    check_keys(config.get('loss', {}), {'reconstruction_loss', 'volume_sigma', 'lambda_v', 'ssim_weight', 'ssim_window', 'tv_weight'}, 'loss')
     check_keys(config.get('transfer', {}), {'enabled', 'checkpoint', 'evidence', 'weight'}, 'transfer')
     transfer = config.get('transfer', {})
     if transfer.get('enabled', False) and (not transfer.get('checkpoint') or not transfer.get('evidence') or not config['dataset'].get('teacher_views')):
@@ -131,6 +131,22 @@ def validate_config(config):
         raise ValueError('Dataset and model anchor resolutions must agree')
     if config.get('loss', {}).get('reconstruction_loss', 'mse') not in ('mse', 'laplace', 'gaussian'):
         raise ValueError('Unsupported reconstruction loss')
+    ssim_patch = config['dataset'].get('ssim_patch', 0)
+    if not isinstance(ssim_patch, int) or isinstance(ssim_patch, bool) or ssim_patch == 1:
+        raise ValueError('dataset.ssim_patch must be 0 (off) or an integer >= 2')
+    ssim_weight = config.get('loss', {}).get('ssim_weight', 0.)
+    ssim_window = config.get('loss', {}).get('ssim_window', 7)
+    if ssim_weight < 0:
+        raise ValueError('loss.ssim_weight must be nonnegative')
+    if not isinstance(ssim_window, int) or isinstance(ssim_window, bool) or ssim_window < 2:
+        raise ValueError('loss.ssim_window must be an integer >= 2')
+    if ssim_weight > 0 and ssim_patch < 2:
+        raise ValueError('loss.ssim_weight > 0 requires dataset.ssim_patch >= 2')
+    tv_weight = float(config.get('loss', {}).get('tv_weight', 0.))
+    if tv_weight < 0:
+        raise ValueError('loss.tv_weight must be nonnegative')
+    if tv_weight > 0 and ssim_patch < 2:
+        raise ValueError('loss.tv_weight > 0 requires dataset.ssim_patch >= 2')
     if config['dataset'].get('subset_mode', 'uniform') not in ('uniform', 'nonuniform'):
         raise ValueError('Unsupported paired-view subset mode')
     anatomy = config['model'].get('anatomy', {})

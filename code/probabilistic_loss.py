@@ -48,8 +48,17 @@ def probability_loss(output, target, config, step):
         metrics['mean_code_alignment'] = effective_kl.detach()
     weighted = beta * effective_kl
     loss = weighted if config['objective'] == 'frozen_reference' else reconstruction + weighted
+    if 'prior_sample_predictions' in output:
+        prior_samples = output['prior_sample_predictions'].float()
+        prior_reconstruction = volume_nll(prior_samples, target[None], rec['likelihood'], rec['observation_sigma'])
+        loss = loss + config['prior_reconstruction_weight'] * prior_reconstruction
+        prior_mse = (prior_samples - target[None]).square().mean().detach()
+        metrics.update(L_volume_prior=prior_reconstruction.detach(),
+                       mse_raw_prior=prior_mse, prior_MSE=prior_mse)
     metrics.update(loss=loss.detach(), warmup_beta=beta)
     metrics['weighted_mean_code_alignment' if config['mean_code'] else 'weighted_kl'] = weighted.detach()
+    metrics['posterior_decoder_views'] = config['posterior_decoder_views']
+    metrics['prior_reconstruction_weight'] = config['prior_reconstruction_weight']
     return loss, metrics
 
 

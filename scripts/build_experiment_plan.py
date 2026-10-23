@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'configs/experiment_plan'
 BASE = yaml.safe_load((ROOT / 'configs/geometry_validation/R0.yaml').read_text())
 MULTIVIEW = {name: yaml.safe_load((ROOT / f'configs/multiview/{name}.yaml').read_text())
-             for name in ('B1', 'T1-nomax-vit', 'T1-nomax-alt')}
+             for name in ('B1', 'T1-nomax-vit', 'T1-nomax-alt', 'T1-nores')}
 HIERARCHICAL = yaml.safe_load((ROOT / 'configs/geometry_validation/H0.yaml').read_text())
 STRUCTURE_TARGET = {'frame': 'scanner', 'scale': 0.25, 'sigma_mm': None, 'rho_mm': None,
                     'energy_threshold': 1.0e-06, 'cache_dir': './cache/multiview_structure'}
@@ -49,7 +49,7 @@ def probability(mode='deterministic', **extra):
              'evaluation': {'estimator': 'prior_mc_mean', 'num_samples': 8, 'seed': 0}}
     merge(block, extra)
     return {'model': {'latent': '__delete__', 'probabilistic': block},
-            'dataset': {'paired_views': {'dense_count': 12, 'context_counts': [6]}},
+            'dataset': {'paired_views': {'dense_count': 48, 'context_counts': [6]}},
             'loss': {'reconstruction_loss': 'mse'}}
 
 
@@ -91,13 +91,14 @@ STAGE1 = {
                                                            'view_update_radius_pixels')}}})),
     'prob-deterministic-control': (
         'Deterministic control for all probability arms: GroupNorm with per-case anchor InstanceNorm, MSE, '
-        'nested C(6) subset of D(12) sampler. Differs from the baseline only by normalization and sampler.',
+        'nested C(6) subset of D(48) sampler. Differs from the baseline only by normalization and sampler.',
         PROB_CONTROL),
     'prob-gt-cvae': (
         'Conditional VAE with GT-conditioned posterior q(z|C,Y) (repaired, independent bounded heads); '
-        'global z=64 via FiLM; deployment samples p(z|C).', arm(probability('gt_cvae'))),
+        'global z=64 via FiLM; deployment samples p(z|C). Backbone: T1-nores (transformer output alone, '
+        'tokens start from max-fused features).', arm(probability('gt_cvae'), base=MULTIVIEW['T1-nores'])),
     'prob-dense-np': (
-        'Dense-view neural-process posterior q(z|D=12 views), KL(q||p(z|C=6)); global z=64 via FiLM; '
+        'Dense-view neural-process posterior q(z|D=48 views), KL(q||p(z|C=6)); global z=64 via FiLM; '
         'deployment uses p(z|C) only.', DENSE_NP),
     'prob-dense-mean-code': (
         'Deterministic mean-code control: q mean code during training, squared alignment of p to it; '

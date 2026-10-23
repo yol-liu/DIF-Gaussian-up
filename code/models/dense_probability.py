@@ -138,9 +138,18 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
                 self.probability_gradients[name] = gradient.detach().float().norm()
             feature.register_hook(record)
 
-    def infer_posterior(self, data, context):
+    def encode_dense(self, data):
+        return self.encode_context(dense_inputs(data), prepare=False)
+
+    def posterior_decode_context(self, data, context):
+        """Views the posterior branch decodes from: C (z is D's only path) or D itself (encoded once)."""
+        if self.probability['posterior_decoder_views'] == 'dense':
+            return self.encode_dense(data)
+        return context
+
+    def infer_posterior(self, data, context, dense=None):
         if self.mode == 'dense_np':
-            dense = self.encode_context(dense_inputs(data), prepare=False)
+            dense = dense if dense is not None else self.encode_dense(data)
             pooled, grid = dense.pooled, dense.grid
             self.record_feature_gradient('dense_conditioning', pooled)
         else:
@@ -160,7 +169,10 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         mu, lv = head(torch.cat([cells, z_g[:, None].expand(-1, cells.shape[1], -1)], -1))
         return mu.transpose(1, 2).reshape(b, -1, r, r, r), lv.transpose(1, 2).reshape(b, -1, r, r, r)
 
-    def sample_state(self, context, prior, posterior=None, posterior_grid=None, mean=False, generator=None):
+    def sample_state(self, context, prior, posterior=None, posterior_grid=None, mean=False, generator=None,
+                     decode_context=None):
+        # Latent statistics always come from C; decode_context only chooses the FiLM-modulated features/geometry.
+        decode_context = decode_context if decode_context is not None else context
         mu, lv = posterior if posterior is not None else prior
         z_g = mu if mean else reparameterize(mu, lv, generator)
         info = dict(mu_p_g=prior[0], logvar_p_g=prior[1])
@@ -181,12 +193,12 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
             z_grid = mu_l if mean else reparameterize(mu_l, lv_l, generator)
             local = self.local_grid.interpolate_to_anchors(z_grid, context.data['points_gs'])
             conditioning = torch.cat([z_g[:, None].expand(-1, local.shape[1], -1), local], -1)
-        features = dict(context.features)
-        features['gs_params'] = dict(context.features['gs_params'])
-        features['gs_params']['feats'] = self.feature_film(context.features['gs_params']['feats'], conditioning)
+        features = dict(decode_context.features)
+        features['gs_params'] = dict(decode_context.features['gs_params'])
+        features['gs_params']['feats'] = self.feature_film(decode_context.features['gs_params']['feats'], conditioning)
         if 'diagnostics' in features:
             features['diagnostics'] = dict(features['diagnostics'])
-        return ProbabilityState(context, features, z_g, z_grid, info)
+        return ProbabilityState(decode_context, features, z_g, z_grid, info)
 
     def state_with_global(self, state, z_g):
         """Explicit diagnostic intervention, holding sparse features and local grid fixed."""
@@ -267,7 +279,7 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         if training:
             self.record_feature_gradient('sparse_conditioning', context.pooled)
         prior = self.infer_prior(context)
-        posterior, posterior_grid = None, None
+        posterior, posterior_grid, decode_context = None, None, context
         if use_posterior:
             if self.probability['objective'] == 'frozen_reference':
                 if self.reference is None:
@@ -275,15 +287,18 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
                 with torch.no_grad():
                     posterior, posterior_grid = self.reference.infer_posterior(data, context)
             else:
-                posterior, posterior_grid = self.infer_posterior(data, context)
+                decode_context = self.posterior_decode_context(data, context)
+                posterior, posterior_grid = self.infer_posterior(
+                    data, context, decode_context if decode_context is not context else None)
         if generator is None and is_eval:
             generator = torch.Generator(device=prior[0].device).manual_seed(self.probability['evaluation']['seed'])
         samples, infos, states = [], [], []
         mean_prediction = m2 = None
         for index in range(count):
             state = self.sample_state(context, prior, posterior, posterior_grid,
-                                      mean=mode.endswith('mean') and mode != 'prior_mc_mean', generator=generator)
-            prediction = self.decode_points(state, context.data) if training else self.decode_chunked(state, eval_npoint)
+                                      mean=mode.endswith('mean') and mode != 'prior_mc_mean', generator=generator,
+                                      decode_context=decode_context)
+            prediction = self.decode_points(state, decode_context.data) if training else self.decode_chunked(state, eval_npoint)
             if training or return_samples:
                 samples.append(prediction)
             if return_debug:
@@ -295,6 +310,12 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
                 delta = prediction - mean_prediction
                 mean_prediction = mean_prediction + delta / (index + 1)
                 m2 = m2 + delta * (prediction - mean_prediction)
+        prior_samples = []
+        if training and self.probability['prior_reconstruction_weight'] > 0:
+            # Deployment branch: same C features, z (and local grid) drawn from p(z|C); never reads D or GT.
+            for _ in range(count):
+                prior_state = self.sample_state(context, prior, generator=generator)
+                prior_samples.append(self.decode_points(prior_state, context.data))
         variance = m2 / (count - 1) if count > 1 else None
         rec = self.probability['reconstruction']
         observation_var = rec['observation_sigma'] ** 2 if rec['likelihood'] == 'gaussian' else None
@@ -304,6 +325,8 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
                   'latent_mode': mode, 'oracle': use_posterior, 'num_samples': count}
         if samples:
             result['sample_predictions'] = torch.stack(samples)
+        if prior_samples:
+            result['prior_sample_predictions'] = torch.stack(prior_samples)
         if training:
             result['kl_infos'] = infos
             if 'structure_loss' in context.features:

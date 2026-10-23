@@ -116,7 +116,8 @@ class DIF_Gaussian(Recon_base):
         keep = self.sample_view_mask(1, count, data['projs'].device)[0]
         return {
             key: value[:, keep] if key in (
-                'projs', 'angles', 'points_proj', 'points_gs_proj', 'view_ids'
+                'projs', 'angles', 'points_proj', 'points_gs_proj', 'view_ids',
+                'patch_points_proj'
             ) else value
             for key, value in data.items()
         }

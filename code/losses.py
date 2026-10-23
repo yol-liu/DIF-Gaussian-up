@@ -36,6 +36,64 @@ def volume_nll(pred, target, likelihood='laplace', sigma=0.1):
     return nll.mean()
 
 
+def ssim3d_loss(pred, target, window=7):
+    '''
+    Differentiable 3D SSIM loss on a regular K^3 query patch.
+
+    pred/target: [B, 1, N] with N = K^3. The patch is reshaped to
+    [B, 1, K, K, K] in C order (i, j, k), which matches the block-grid
+    layout produced by the dataset's ssim_patch sampler.
+
+    SSIM uses a uniform window via conv3d (valid, no padding) and the
+    standard stabilizers C1=(0.01 L)^2, C2=(0.03 L)^2 with L=1
+    (values are normalized to [0, 1]). Returns mean(1 - SSIM).
+    '''
+    n = pred.shape[-1]
+    side = int(round(n ** (1. / 3)))
+    if side ** 3 != n or side < 2:
+        raise ValueError(f'SSIM patch must be a K^3 grid (K >= 2), got N={n}')
+    size = min(int(window), side)
+    if size < 2:
+        raise ValueError('SSIM window must be at least 2')
+
+    pred_vol = pred.reshape(-1, 1, side, side, side).float()
+    target_vol = target.reshape(-1, 1, side, side, side).float()
+
+    kernel = pred_vol.new_ones((1, 1, size, size, size)) / float(size ** 3)
+    mu_p = F.conv3d(pred_vol, kernel)
+    mu_t = F.conv3d(target_vol, kernel)
+    mu_p2, mu_t2, mu_pt = mu_p.square(), mu_t.square(), mu_p * mu_t
+    # clamp: floating point can push window variances slightly below zero
+    var_p = (F.conv3d(pred_vol.square(), kernel) - mu_p2).clamp_min(0.)
+    var_t = (F.conv3d(target_vol.square(), kernel) - mu_t2).clamp_min(0.)
+    cov = F.conv3d(pred_vol * target_vol, kernel) - mu_pt
+
+    c1, c2 = 0.01 ** 2, 0.03 ** 2
+    ssim = ((2. * mu_pt + c1) * (2. * cov + c2)) / \
+           ((mu_p2 + mu_t2 + c1) * (var_p + var_t + c2))
+    return (1. - ssim).mean()
+
+
+def tv3d_loss(pred):
+    '''
+    Anisotropic total variation on a regular K^3 query patch.
+
+    pred: [B, 1, N] with N = K^3, reshaped to [B, 1, K, K, K] in C order
+    (same layout as ssim3d_loss). Penalizes absolute first differences
+    along each axis, encouraging spatially smooth predictions.
+    Returns mean(|dV/di|) + mean(|dV/dj|) + mean(|dV/dk|).
+    '''
+    n = pred.shape[-1]
+    side = int(round(n ** (1. / 3)))
+    if side ** 3 != n or side < 2:
+        raise ValueError(f'TV patch must be a K^3 grid (K >= 2), got N={n}')
+    vol = pred.reshape(-1, 1, side, side, side).float()
+    dx = (vol[:, :, 1:] - vol[:, :, :-1]).abs().mean()
+    dy = (vol[:, :, :, 1:] - vol[:, :, :, :-1]).abs().mean()
+    dz = (vol[:, :, :, :, 1:] - vol[:, :, :, :, :-1]).abs().mean()
+    return dx + dy + dz
+
+
 def kl_warmup_scale(step, kl_warmup_steps):
     if kl_warmup_steps is None or kl_warmup_steps <= 0:
         return 1.0
@@ -217,6 +275,6 @@ def metrics_to_wandb(metrics: Dict, prefix='train'):
             continue
         if torch.is_tensor(v):
             log[f'{prefix}/{k}'] = float(v.item()) if v.numel() == 1 else float(v.mean().item())
-        elif isinstance(v, (int, float)):
+        elif isinstance(v, (int, float, str)):
             log[f'{prefix}/{k}'] = v
     return log

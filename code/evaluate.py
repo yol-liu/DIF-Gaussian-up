@@ -193,7 +193,7 @@ if __name__ == '__main__':
 
     # -- model, load ckpt
     ckpt_path = args.checkpoint or f'./logs/{args.name}/ep_{args.epoch}.pth'
-    ckpt = torch.load(ckpt_path, map_location=torch.device('cpu'))
+    ckpt = torch.load(ckpt_path, map_location=torch.device('cpu'), weights_only=False)
     print('load ckpt from', ckpt_path)
     
     model = build_model(cfg.model)

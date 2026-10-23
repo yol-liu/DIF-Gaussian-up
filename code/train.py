@@ -15,7 +15,7 @@ from datasets.dst_gs import CBCT_dataset_gs
 from models.factory import build_model
 from utils import convert_cuda, load_config
 from evaluate import eval_one_epoch
-from losses import elbo_loss, compute_collapse_diagnostics, metrics_to_wandb, volume_nll
+from losses import elbo_loss, compute_collapse_diagnostics, metrics_to_wandb, ssim3d_loss, tv3d_loss, volume_nll
 from checkpoints import rng_state, warm_start, resume_training
 from checkpoints import weights_from_checkpoint
 from transfer import feature_distillation, teacher_inputs, validate_teacher, file_hash
@@ -253,7 +253,7 @@ if __name__ == '__main__':
         CBCT_dataset_gs(
             dst_name=args.dst_name,
             cfg=cfg.dataset,
-            split='eval',
+            split='test',
             num_views=args.num_views,
             out_res_scale=args.eval_scale,
         ), 
@@ -427,6 +427,16 @@ if __name__ == '__main__':
                     loss = volume_nll(pred['points_pred'].float(), item['points_gt'],
                                       loss_cfg.get('reconstruction_loss', 'mse'), loss_cfg.get('volume_sigma', .1))
                     metrics = {'loss': loss.detach(), 'L_volume': loss.detach()}
+                    if 'patch_pred' in pred:
+                        # auxiliary 3D-SSIM term on the regular K^3 query patch
+                        l_ssim = ssim3d_loss(pred['patch_pred'], item['patch_gt'],
+                                             window=loss_cfg.get('ssim_window', 7))
+                        loss = loss + float(loss_cfg.get('ssim_weight', 0.)) * l_ssim
+                        metrics['L_ssim'] = l_ssim.detach()
+                        if float(loss_cfg.get('tv_weight', 0.)) > 0:
+                            l_tv = tv3d_loss(pred['patch_pred'])
+                            loss = loss + float(loss_cfg.get('tv_weight', 0.)) * l_tv
+                            metrics['L_tv'] = l_tv.detach()
                     if probability_cfg is not None:
                         # Probability controls retain their diagnostics; plain follows the old path.
                         with torch.no_grad():

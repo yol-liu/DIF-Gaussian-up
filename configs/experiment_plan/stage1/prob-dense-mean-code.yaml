@@ -29,7 +29,7 @@ model:
     point_chunk_size: 8192
     residual_init: 0.001
     residual_base: false
-    token_init: mean
+    token_init: max
     fixed_radius_pixels: 1.0
     footprint_min_pixels: 0.25
     footprint_max_pixels: 2.0
@@ -68,7 +68,7 @@ model:
       observation_sigma: 0.1
       reduction: mean_query
     kl:
-      beta_final: 2.0e-05
+      beta_final: 2.0e-02
       warmup_steps: 500
       free_bits: 0.0
       free_bits_order: per_case
@@ -79,11 +79,11 @@ model:
       seed: 0
     mean_code: true
 dataset:
-  root_dir: /media/wyin/Expansion/Data/LUNA16/C2RV-CBCT/data
+  root_dir: /data1/workspace/C2RV-CBCT/data
   gs_res: 12
   structure_supervision: false
   paired_views:
-    dense_count: 12
+    dense_count: 48
     context_counts:
     - 6
 loss:

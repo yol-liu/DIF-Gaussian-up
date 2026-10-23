@@ -83,6 +83,11 @@ class Recon_base(nn.Module):
             result = {
                 'points_pred': self.forward_points(feats_dict, data)
             }
+            if 'patch_points' in data:
+                # auxiliary regular K^3 patch for the SSIM loss: same shared
+                # Gaussian set / encoder features, only the cheap query+decode runs again
+                patch_data = dict(data, points=data['patch_points'], points_proj=data['patch_points_proj'])
+                result['patch_pred'] = self.forward_points(feats_dict, patch_data)
             if 'structure_loss' in feats_dict:
                 result['structure_loss'] = feats_dict['structure_loss']
             if return_features:
