@@ -18,12 +18,13 @@ ANCHOR_MLPS = ('gs_feats_mlp', 'gs_params_mlp')
 DEFAULTS = {
     'mode': 'dense_np', 'objective': 'joint', 'normalization': 'groupnorm',
     'film_init_std': .001, 'train_samples': 1, 'mean_code': False,
-    'posterior_decoder_views': 'dense', 'prior_reconstruction_weight': 0.1,
+    'posterior_decoder_views': 'context', 'prior_reconstruction_weight': 0.0,
     'reference_checkpoint': None, 'reference_evidence': None,
+    'z_forcing': {'enabled': False, 'ctx_drop_prob': 0.0},
     'latent': {'global_dim': 64, 'use_local': False, 'local_dim': 16, 'grid_res': 4,
                'sigma_min': .001, 'sigma_max': 3., 'initial_sigma': .5},
     'reconstruction': {'likelihood': 'gaussian', 'observation_sigma': .1, 'reduction': 'mean_query'},
-    'kl': {'beta_final': .001, 'warmup_steps': 2000, 'free_bits': 0.,
+    'kl': {'beta_final': .001, 'warmup_steps': 2000, 'free_bits': .05,
            'free_bits_order': 'per_case', 'reduction': 'sum_latent_mean_batch'},
     'evaluation': {'estimator': 'prior_mc_mean', 'num_samples': 8, 'seed': 0},
 }
@@ -79,6 +80,11 @@ def resolve_probability(config):
         raise ValueError('posterior_decoder_views must be context or dense')
     if result['prior_reconstruction_weight'] < 0:
         raise ValueError('prior_reconstruction_weight must be nonnegative')
+    z_forcing = result['z_forcing']
+    if not isinstance(z_forcing['enabled'], bool) or not 0 <= z_forcing['ctx_drop_prob'] < 1:
+        raise ValueError('z_forcing requires boolean enabled and ctx_drop_prob in [0, 1)')
+    if z_forcing['ctx_drop_prob'] > 0 and not z_forcing['enabled']:
+        raise ValueError('z_forcing.ctx_drop_prob > 0 requires z_forcing.enabled')
     return result
 
 

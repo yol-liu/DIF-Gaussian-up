@@ -1,0 +1,43 @@
+%%
+%% Chapter 5: Conclusion
+%% Independent file, included by ../main.tex
+%%
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented the GT-conditioned CVAE, a conditional variational
+extension of Gaussian-splatting-based sparse-view CBCT reconstruction.
+The model encodes the ground-truth volume into the variational posterior
+$q(z\mid C,Y)$ during training through a lightweight 3D CNN, yet
+discards both the GT encoder and the dense views at deployment,
+sampling exclusively from a sparse-view neural-process prior
+$p(z\mid C)$. On the LUNA16 benchmark with six projections, the model
+reaches $29.50$\,dB PSNR / $0.868$\,SSIM (best-eval), within $0.04$\,dB
+of the deterministic backbone, while providing per-point predictive
+variance at no additional inference cost.
+
+The central methodological insight of this paper is that two design
+choices carry the method. First, the decoder is conditioned on the
+sparse context features, so the latent is the \emph{sole} channel
+through which dense information reaches the volume during training;
+this keeps the latent informative without any train/deploy mismatch.
+Second, ablations show that \texttt{max}-fused anchor tokens preserve
+the latent's discriminating signal, worth roughly $2$\,dB over
+\texttt{mean} initialization. With these choices, the GT-conditioned
+posterior concentrates the latent on case-specific content during
+training at no cost at deployment.
+
+\textbf{Future work} includes (i) validating the GT-conditioned design
+under additional context counts and denser view schedules,
+(ii) extending the model to hierarchical local latents for fine-grained
+uncertainty maps, (iii) calibrating the predictive variance against
+real reconstruction errors for use in dose-guided adaptive
+radiotherapy, and (iv) transferring the information-flow design to other
+modality-paired inverse problems (e.g., sparse-view MRI, low-dose PET).
+
+\section*{Acknowledgements}
+
+The authors gratefully acknowledge the computing resources and the
+LUNA16 challenge data \cite{setio2017luna16}. The authors declare no
+conflict of interest.

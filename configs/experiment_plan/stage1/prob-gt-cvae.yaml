@@ -69,9 +69,9 @@ model:
       observation_sigma: 0.1
       reduction: mean_query
     kl:
-      beta_final: 2.0e-05
+      beta_final: 2.0e-02
       warmup_steps: 500
-      free_bits: 0.0
+      free_bits: 0.5
       free_bits_order: per_case
       reduction: sum_latent_mean_batch
     evaluation:
@@ -79,7 +79,7 @@ model:
       num_samples: 8
       seed: 0
 dataset:
-  root_dir: /home/user/workspace/C2RV-CBCT/data
+  root_dir: /data1/workspace/C2RV-CBCT/data
   gs_res: 12
   structure_supervision: false
   paired_views:

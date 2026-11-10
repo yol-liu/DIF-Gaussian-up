@@ -70,7 +70,7 @@ model:
     kl:
       beta_final: 5.0e-02
       warmup_steps: 500
-      free_bits: 0.0
+      free_bits: 0.05
       free_bits_order: per_case
       reduction: sum_latent_mean_batch
     evaluation:

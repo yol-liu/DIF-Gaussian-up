@@ -1,0 +1,93 @@
+%%
+%% Draft article prepared with the Elsevier elsarticle class
+%% for the journal Neurocomputing (Elsevier).
+%% Each chapter lives in an independent file under ./sections/.
+%% This draft is centered on the GT-conditioned CVAE algorithm.
+%%
+\documentclass[preprint,12pt]{elsarticle}
+
+%% Useful packages
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning, fit, calc}
+\usepackage{listings}
+
+%% Allow LaTeX to stretch lines slightly to avoid paragraph-level overfull
+\setlength{\emergencystretch}{2em}
+
+%% Listings style for the code snippets (appendix)
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\bfseries\color{blue!60!black},
+  commentstyle=\color{green!45!black},
+  stringstyle=\color{red!60!black},
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  frame=single,
+  breaklines=true,
+  captionpos=b,
+  aboveskip=8pt,
+  belowskip=6pt,
+  xleftmargin=1.6em,
+}
+
+\journal{Neurocomputing}
+
+\begin{document}
+
+\begin{frontmatter}
+
+%% Title, authors and addresses -----------------------------------------
+\title{GT-Conditioned Variational Gaussian Splatting for Sparse-View
+Cone-Beam CT Reconstruction}
+
+%% Authors (to be completed before submission)
+\author[aff1]{Author One\corref{cor1}}
+\ead{author.one@example.edu}
+\cortext[cor1]{Corresponding author}
+\author[aff1]{Author Two}
+\author[aff1]{Author Three}
+
+\affiliation[aff1]{organization={Department of Biomedical Engineering, Example University},
+            addressline={1 Example Road},
+            city={City},
+            postcode={000000},
+            state={},
+            country={Country}}
+
+%%
+%% Abstract / keywords are contained in abstract.tex (independent file).
+%%
+\input{abstract}
+
+\end{frontmatter}
+
+%% Table of contents -----------------------------------------
+%% Each numbered section below corresponds to one independent .tex file:
+\input{sections/introduction}
+\input{sections/related_work}
+\input{sections/method}
+\input{sections/experiments}
+\input{sections/conclusion}
+
+%% References ------------------------------------------------
+\section*{References}
+\bibliographystyle{elsarticle-num}
+\bibliography{refs}
+
+%% Key code snippets (GT encoder, posterior path, released config)
+\appendix
+\input{sections/appendix}
+
+\end{document}

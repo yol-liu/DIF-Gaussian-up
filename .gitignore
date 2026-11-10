@@ -136,3 +136,6 @@ dmypy.json
 .DS_Store
 /cache/multiview_structure/
 /backups/
+
+# Local LaTeX toolchain (texlive install), not part of the repo
+paper/.tools/

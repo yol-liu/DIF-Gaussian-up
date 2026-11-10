@@ -1,0 +1,53 @@
+%% ============================================================================
+%% Abstract and keywords (independent file, included inside \begin{frontmatter})
+%% ============================================================================
+
+\begin{abstract}
+Sparse-view cone-beam CT (CBCT) reconstruction aims to recover a tomographic
+volume from an extremely limited set of projection views, which is an
+ill-posed inverse problem that traditional methods make it difficult to 
+achieve effective reconstruction, and is typically solved with deterministic
+deep networks. A probabilistic formulation can in principle quantify
+reconstruction uncertainty and exploit privileged information --- dense views
+or even the ground-truth volume --- during training, as long as inference
+never depends on it. In this work we present the \emph{GT-conditioned CVAE}
+ a conditional variational extension of the 3D-Gaussian-splatting CBCT
+reconstructor. During training only, a lightweight 3D convolutional network
+encodes the ground-truth volume into a 32-dimensional descriptor that
+conditions the variational posterior $q(z\mid C,Y)$ over a 64-dimensional
+global scene latent, while a sparse-view neural-process prior
+$p(z\mid C)$ is trained jointly. At deployment the GT encoder and the
+posterior are discarded: $z$ is drawn exclusively from the sparse-view prior,
+so inference requires exactly the same inputs as the deterministic backbone
+and additionally yields per-point predictive variance from $N{=}8$
+Monte-Carlo samples. The decoder renders exclusively from the sparse
+context features, so the latent is the sole channel of dense information
+during training. On the LUNA16 CBCT benchmark with six
+projections, the GT-conditioned CVAE reaches $29.50$\,dB PSNR /
+$0.868$\,SSIM, within $0.04$\,dB of the deterministic backbone
+($29.54$\,dB / $0.870$\,SSIM), while providing calibrated deployment-side
+uncertainty estimates at no additional inference cost. Ablations
+quantify the decisive design choices -- posterior access to the ground
+truth and fusion token initialization -- for future probabilistic CBCT
+models.
+\end{abstract}
+
+%% Research highlights
+\begin{highlights}
+\item A GT-conditioned CVAE for Gaussian-splatting sparse-view CBCT
+reconstruction: ground truth is encoded into the variational posterior
+during training only.
+\item Deployment discards both the GT encoder and dense views, sampling
+exclusively from a sparse-view prior; per-point predictive variance comes
+for free from Monte-Carlo estimation.
+\item Ablations isolate the decisive design choices: posterior access to
+the ground truth and fusion token initialization ($\sim\!2$\,dB), with the
+decoder routed through the context features.
+\end{highlights}
+
+%% Keywords
+\begin{keyword}
+Sparse-view CBCT reconstruction \sep 3D Gaussian splatting \sep
+conditional variational autoencoder \sep variational inference \sep
+latent neural processes \sep uncertainty estimation
+\end{keyword}

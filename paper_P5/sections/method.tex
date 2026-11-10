@@ -1,0 +1,299 @@
+%%
+%% Chapter 3: Method -- the GT-Conditioned CVAE algorithm
+%% Independent file, included by ../main.tex
+%%
+
+\section{Method: The GT-Conditioned CVAE}
+\label{sec:method}
+
+We first fix notation and review the deterministic splatting backbone
+(Section~\ref{sec:method:backbone}), then present the probabilistic
+neural-process formulation (Section~\ref{sec:method:prob}), the
+GT-conditioned posterior (Section~\ref{sec:method:p5}), the training
+objective (Section~\ref{sec:method:loss}), and the deployment-time
+estimator (Section~\ref{sec:method:inference}).
+
+\subsection{Problem Setting and Notation}
+\label{sec:method:problem}
+
+Let $x\in\mathbb{R}^{D\times H\times W}$ denote the target CT volume and
+let $C=\{(\mathcal{I}_i,\theta_i)\}_{i=1}^{m}$ denote the observed
+\emph{context}: $m$ projection images $\mathcal{I}_i$ together with
+their gantry angles $\theta_i$. In our protocol $m=6$ fixed views with
+raw IDs $\{0,8,16,25,33,41\}$. During training an additional
+\emph{dense} set $D$ of $48$ views is available, and the ground-truth
+volume $Y$ itself may be encoded by the posterior network. We write
+$p_{\mathrm{data}}(x\mid C)$ for the target
+posterior we wish to approximate.
+
+\subsection{Deterministic Splatting Backbone}
+\label{sec:method:backbone}
+
+We adopt the DIF-Gaussian architecture \cite{lin2024difgaussian} as the
+reconstruction backbone. A multi-view image encoder $E$ (\emph{UNet} with
+output channels 128) extracts per-view convolutional features; a
+geometry-aware multiview transformer with absolute-angle positional
+embedding and a spatial window of $\pm1$ anchor neighbors fuses the view
+features into a set of $K=512$ anchor tokens at volume resolution 12;
+after anchor-level fusion the tokens are unprojected into 3D Gaussian
+primitives (position, opacity, anisotropic covariance,
+spherical-harmonic radiance). A point decoder consumes per-Gaussian
+features together with query point coordinates and predicts per-point
+density/attenuation, which is normalized by a \emph{volume rendering}
+step to produce the final volume. For a fixed sparse view set, the
+deterministic model computes
+
+\begin{equation}
+    \hat{x} = g\big(f_{\mathrm{GS}}(E(C))\big),
+    \label{eq:deterministic}
+\end{equation}
+
+where $f_{\mathrm{GS}}$ denotes the Gaussian formation and $g$ the
+point-decoder plus rendering. The backbone is trained by
+volume-space mean-squared error (MSE) against $x$.
+
+\subsection{Probabilistic Formulation: Latent Neural Process}
+\label{sec:method:prob}
+
+To obtain reconstruction uncertainty we introduce a global latent
+variable $z\in\mathbb{R}^{d_z}$ ($d_z=64$) and factorize the model as a
+latent neural process \cite{garnelo2018neural,garnelo2018latent} over
+the view sets:
+
+\begin{align}
+    p(x, z \mid C) &= p(z\mid C)\, p(x\mid z, C),
+    \label{eq:joint}\\
+    p(z\mid C) &= \mathcal{N}\big(z; \mu_\phi(\psi(C)),\,
+        \mathrm{diag}\,\sigma_\phi^2(\psi(C))\big),
+    \label{eq:prior}
+\end{align}
+
+where $\psi(C)=\big[\,\mathrm{mean}_{k}\, a_k(C);\ \mathrm{obs}(C)\,\big]$
+concatenates the pooled anchor features with a 7-dimensional
+permutation-invariant observation descriptor
+$\mathrm{obs}(C)=\big[\log(1{+}|C|),\, \lambda_{\mathrm{cov}},\,
+\sin\bar\theta, \,\cos\bar\theta,\, \sin 2\bar\theta,\,
+\cos 2\bar\theta,\, r\big]$ --
+count, circular coverage, first/second-order angle moments, and mean
+resultant length -- and $\mu_\phi,\sigma_\phi$ are the \emph{prior head},
+a bounded Gaussian head with per-dimension sigmoid-bounded
+$\sigma\in[\sigma_{\min},\sigma_{\max}]=[0.001,3.0]$ and
+$\sigma_{\mathrm{init}}=0.5$. Conditioning the decoder on $z$ is done by
+feature-wise linear modulation (FiLM): a modulation network with
+zero-mean initialization at scale $10^{-3}$ transforms the Gaussian
+feature vector into per-channel scale/shift applied to
+$f_{\mathrm{GS}}(E(C))$ before volume rendering:
+$f_{\mathrm{GS}}^{(z)}(C)=\mathrm{FiLM}(z)\,f_{\mathrm{GS}}(E(C))$. The
+rendered predictive distribution is Gaussian with a fixed observation
+variance $\sigma_{\mathrm{obs}}^2=(0.1)^2$.
+
+\subsection{GT-Conditioned CVAE Posterior}
+\label{sec:method:p5}
+
+Training with the prior alone ($z\sim p(z\mid C)$) learns a stochastic
+mapping from sparse views but gives the model no hint about the
+\emph{target}. The conditional variational principle fixes this: we
+train a separate \emph{posterior head} so that $z$ is drawn from
+$q(z\mid C, Y)$ instead, concentrating $z$ on atypical target content
+and maximizing the ELBO. The \emph{GT-conditioned} CVAE posterior
+is
+
+\begin{equation}
+    q(z\mid C, Y) = \mathcal{N}\big(z; \mu_\phi'(\psi(C)\oplus h_Y), \,
+        \mathrm{diag}\,\sigma_{\phi'}^2(\psi(C)\oplus h_Y)\big),
+    \label{eq:posterior}
+\end{equation}
+
+where $h_Y=\mathrm{GTEncoder}(Y)\in\mathbb{R}^{32}$ is a global
+descriptor produced by a lightweight 3D CNN ($1\to16\to16\to32$ feature
+channels, two stride-2 downsamplings, GroupNorm, SiLU) that mean-pools
+its feature volume over the spatial axes. During training the posterior
+head receives the concatenation $\psi(C)\oplus h_Y$ and the model is
+optimized with latent samples from $q$; the sharing of the sparse
+representation $\psi(C)$ between prior and posterior anchors the two
+distributions to the same context, which keeps the KL term bounded and
+makes $q$ strictly more informative than $p$.
+
+Critically, the GT-conditioned posterior consumes the ground-truth
+volume \emph{only inside the posterior head and only during training}.
+The decoder never sees $h_Y$; it observes $z$ and, by default, the
+features of the context set. At deployment the GT encoder is not
+instantiated and $z$ is sampled from $p(z\mid C)$
+(Section~\ref{sec:method:inference}), so inference requires exactly the
+same inputs as the deterministic backbone: six sparse views and nothing
+else.
+
+\subsection{Training Objective}
+\label{sec:method:loss}
+
+The full objective combines, per training step,
+\begin{itemize}
+\item the \emph{posterior reconstruction} term
+      $\mathcal{L}_{\mathrm{vol}}^{(q)}=\mathbb{E}_{q(z\mid C,Y)}\,
+      \big[\tfrac{1}{2\sigma_{\mathrm{obs}}^2}\,\|g(f_{\mathrm{GS}}^{(z)}(C))-x\|_2^2\big]$,
+      evaluated with one reparameterized sample ($S=1$) over $1024$
+      query points of a random volume block;
+\item a \emph{weighted KL} term with a linear warm-up,
+      $\beta_t = \beta_f\cdot\min(1, t/500)$, $\beta_f = 2\times10^{-2}$,
+      where the per-dimension KL is floored by a free-bits allowance of
+      $0.5$ nats \cite{kingma2016freebits} before being summed over the
+      latent dimensions and averaged over the batch;
+\item an optional \emph{prior-reconstruction} term that supervises the
+      deployment path by rendering \emph{prior} samples
+      $z\sim p(z\mid C)$ against the same target, weighted by
+      $w_{\mathrm{prior}}$.
+\end{itemize}
+Formally,
+
+\begin{equation}
+    \mathcal{L}
+    = \underbrace{\mathcal{L}_{\mathrm{vol}}^{(q)}}_{\text{posterior rec.}}
+    + \beta_t\,
+      \underbrace{\mathrm{KL}\big[q(z\mid C,Y)\,\|\,p(z\mid C)\big]}_{\text{KL}}
+    + w_{\mathrm{prior}}\,
+      \underbrace{\mathcal{L}_{\mathrm{vol}}^{(p)}}_{\text{prior rec.}},
+    \label{eq:loss}
+\end{equation}
+
+with the KL computed in closed form between diagonal Gaussians. In the
+configuration studied here $\beta_f=2{\times}10^{-2}$ and
+$w_{\mathrm{prior}}=0$ by default. All parameters
+are trained jointly with AdamW ($\mathrm{lr}=2{\times}10^{-4}$, weight
+decay $10^{-2}$ for the shared backbone, none for fusion modules) and a
+per-epoch StepLR schedule that decays the learning rate by
+$(10^{-3})^{1/400}$ per epoch.
+
+\subsection{Deployment-Time Estimator}
+\label{sec:method:inference}
+
+At inference the posterior head, the GT encoder, and the dense views are
+all absent. We draw $N=8$ Monte-Carlo samples $\{z^{(n)}\}_{n=1}^{N}
+\overset{\text{i.i.d.}}{\sim} p(z\mid C)$ from the prior head, render
+$N$ volumes, and report the mean prediction and the per-point predictive
+variance
+
+\begin{equation}
+    \hat{x}
+    = \tfrac{1}{N}\textstyle\sum_{n} \hat{x}^{(n)},
+    \qquad
+    \widehat{\mathrm{Var}}(x)
+    = \tfrac{1}{N-1}\textstyle\sum_{n}
+      \big(\hat{x}^{(n)}-\hat{x}\big)^2 + \sigma_{\mathrm{obs}}^2 ,
+    \label{eq:estimator}
+\end{equation}
+
+where the second term is the observation noise.
+
+Algorithm~\ref{alg:p5} summarizes the training and inference
+procedure.
+
+\begin{algorithm}[t]
+\caption{GT-Conditioned CVAE Training and Inference}
+\label{alg:p5}
+\begin{algorithmic}[1]
+\REQUIRE Sparse context $C$ (6 views); training only: dense set $D$ (48
+views), GT volume $Y$; backbone $g\circ f_{\mathrm{GS}}$, heads
+$\mu_\phi,\sigma_\phi,\mu_{\phi'},\sigma_{\phi'}$, GT encoder $E_Y$.
+\STATE {\bf Training step:}
+\STATE \quad $\psi(C)=\big[\mathrm{mean}_k a_k(C);\,\mathrm{obs}(C)\big]$;\;
+$h_Y = E_Y(Y)$
+\STATE \quad draw $z\sim q(z\mid C,Y)$ by reparameterization of
+Eq.~\eqref{eq:posterior}
+\STATE \quad decode with FiLM-modulated context features:
+$\hat{x}^{(q)}=g(f_{\mathrm{GS}}^{(z)}(C))$;
+\STATE \quad (optional) draw $z_p\sim p(z\mid C)$ and
+$\hat{x}^{(p)}=g(f_{\mathrm{GS}}^{(z_p)}(C))$
+\STATE \quad update all parameters with
+$\nabla\,\mathcal{L}$~(\ref{eq:loss})
+\STATE {\bf Inference:}
+\STATE \quad discard $E_Y,q$; draw $z^{(1)}\dots z^{(N)}\sim p(z\mid C)$
+\STATE \quad $\hat{x}=\tfrac1N\sum_n g(f_{\mathrm{GS}}^{(z^{(n)})}(C))$;
+estimate variance per Eq.~\eqref{eq:estimator}
+\RETURN $\hat{x}$ and per-point variance
+\end{algorithmic}
+\end{algorithm}
+
+Figure~\ref{fig:p5_flow} summarizes the complete information flow of the
+method at training and at deployment, highlighting which modules
+consume the ground truth and which ones are discarded before inference.
+
+\begin{figure}[H]
+\centering
+\caption{Information flow of the GT-conditioned CVAE.
+\emph{Top (Training):} the GT encoder and
+the posterior head are the only modules that consume the ground-truth
+volume $Y$; the decoder always renders from the sparse context
+features, so $z$ is the \emph{sole} channel of dense/target
+information. The loss combines posterior reconstruction with the
+annealed, free-bits-floored $\mathrm{KL}[q\|p]$ and an optional
+prior-reconstruction term. \emph{Bottom (Deployment):} the GT encoder
+and posterior are removed; $N{=}8$ samples $z_n\sim p(z\mid C)$ from
+the same sparse-view prior yield a mean volume and per-point variance.}
+\label{fig:p5_flow}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    font=\small,
+    >=stealth,
+    box/.style={draw, rounded corners=2pt, align=center, inner sep=3pt,
+                minimum height=8mm, text width=2.15cm},
+    enc/.style={box, fill=blue!8},
+    head/.style={box, fill=orange!8},
+    gtenc/.style={box, fill=red!8},
+    dec/.style={box, fill=green!8},
+    outbox/.style={box, fill=gray!10},
+    loss/.style={box, fill=yellow!15, text width=6.6cm},
+    arr/.style={thick, ->},
+    das/.style={thick, dashed, ->},
+]
+% ---- training column x=0, vertical spacing 1.6cm --------------------
+\node[enc]   (C)    at (0, 0)       {Sparse $C$\\\scriptsize (6 views)};
+\node[enc]   (E)    at (0, -1.6)    {Encoder $E$\\\scriptsize UNet, 128 ch.};
+\node[enc]   (TF)   at (0, -3.2)    {Geom. transformer\\\scriptsize anchor fusion};
+\node[head]  (PSI)  at (0, -4.8)    {Pooled context\\$\psi(C)$};
+\node[box]   (CONC) at (0, -6.4)    {$\psi(C)\oplus h_Y$};
+\node[head]  (Q)    at (0, -8.0)    {Posterior head\\$q(z\mid C,Y)$};
+\node[box]   (ZQ)   at (0, -9.6)    {$z\sim q(z\mid C,Y)$};
+\node[dec]   (FILM) at (0, -11.2)   {FiLM modulation};
+\node[dec]   (DEC)  at (0, -12.8)   {Decoder\\$g\circ f_{\mathrm{GS}}^{(z)}(C)$};
+\node[outbox](XQ)   at (0, -14.4)   {$\hat{x}^{\,(q)}$};
+\node[loss]  (LOSS) at (4.6, -15.3) {$\mathcal{L}=\mathcal{L}_{\mathrm{vol}}^{(q)}
+   +\beta_t\,\mathrm{KL}[q\|p]$\\[1pt]
+   $+\,w_{\mathrm{prior}}\,\mathcal{L}_{\mathrm{vol}}^{(p)}$};
+
+\node[gtenc] (Y)    at (6.8, -0.35) {GT volume $Y$};
+\node[gtenc] (GTE)  at (6.8, -1.95) {GTEncoder\\\scriptsize $1{\to}16{\to}16{\to}32$};
+\node[gtenc] (hY)   at (6.8, -3.55) {$h_Y\in\mathbb{R}^{32}$};
+\node[head]  (PriH) at (9.8, -4.8)  {Prior head\\$p(z\mid C)$};
+\node[box]   (KL)   at (9.8, -9.6)  {$\mathrm{KL}[q\|p]$};
+
+\draw[arr] (C) -- (E) -- (TF) -- (PSI);
+\draw[arr] (Y) -- (GTE) -- (hY);
+\draw[arr] (hY.south) |- (CONC.east);
+\draw[arr] (PSI) -- (CONC) -- (Q) -- (ZQ) -- (FILM) -- (DEC) -- (XQ);
+\draw[arr] (PSI.east) -| (PriH.west);
+\draw[arr] (XQ.south) -| (LOSS.north west);
+\draw[das] (Q.east) -| (KL.west);
+\draw[das] (PriH.south) -| (KL.north);
+\draw[arr] (KL.south) -| (LOSS.north east);
+
+\node[draw=red!70!black, dashed, fit=(Y)(GTE)(hY), inner sep=4pt,
+      label={[red!70!black, font=\scriptsize]above:training only (discarded at deployment)}] {};
+\node[draw=black!60, dashed, fit=(C)(LOSS)(KL)(Y), inner sep=6pt,
+      label={[font=\small\bfseries]above:Training}] {};
+
+% ---- deployment row y=-17.6, spacing 2.1cm --------------------------
+\node[enc, text width=1.4cm]   (DC)    at (0.0, -17.6)  {Sparse $C$\\\scriptsize (6 views)};
+\node[enc, text width=1.4cm]   (DE)    at (2.1, -17.6)  {Enc. $E$\\\scriptsize + transformer};
+\node[head, text width=1.4cm]  (DPSI)  at (4.2, -17.6)  {$\psi(C)$\\\scriptsize pooled\\context};
+\node[head, text width=1.4cm]  (DPRI)  at (6.3, -17.6)  {Prior head\\$p(z\mid C)$};
+\node[box, text width=1.4cm]   (DZ)    at (8.4, -17.6)  {$z_n\sim p(z\mid C)$\\\scriptsize $n{=}1,\dots,8$};
+\node[dec, text width=1.4cm]   (DFILM) at (10.5, -17.6) {FiLM\\\scriptsize layers};
+\node[dec, text width=1.4cm]   (DDEC)  at (12.6, -17.6) {Decoder\\\scriptsize context\\features};
+\node[outbox, text width=1.4cm](DX)    at (14.7, -17.6) {$\hat{x}$\\[1pt]$\widehat{\mathrm{Var}}(x)$};
+
+\draw[arr] (DC) -- (DE) -- (DPSI) -- (DPRI) -- (DZ) -- (DFILM) -- (DDEC) -- (DX);
+
+\node[draw=teal!70!black, dashed, fit=(DC)(DX), inner sep=3pt,
+      label={[font=\small\bfseries, teal!70!black]above:Deployment (no GT, no dense views)}] {};
+\end{tikzpicture}}
+\end{figure}

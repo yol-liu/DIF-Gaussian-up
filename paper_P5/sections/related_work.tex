@@ -1,0 +1,100 @@
+%%
+%% Chapter 2: Related Work
+%% Independent file, included by ../main.tex
+%%
+
+\section{Related Work}
+\label{sec:rel}
+
+\subsection{Sparse-View CT and CBCT Reconstruction}
+\label{sec:rel:cbct}
+
+Analytical reconstruction (FDK, filtered back-projection, ART-family
+iterative solvers) degrades sharply when the number of projections is
+small, producing severe streak artifacts. Classical regularization with
+total variation and dictionary priors mitigates the artifacts but
+struggles on anatomy-correlated noise and requires costly tuning.
+Deep learning approaches first dominated the field as post-processing
+networks that clean artifacts on FDK images, then progressed to
+end-to-end and unrolled models that alternate data-consistency steps
+with learned proximal operators, and later to deep generative models in
+which diffusion or score-based samplers synthesize volumes from sparse
+views \cite{song2021scorebased}. More recently, implicit neural
+representations (INRs) and explicit radiance-field renderers have been
+adopted for CT, treating the volume as parameters of a differentiable
+function that is fit by projection consistency \cite{mildenhall2020nerf}.
+The DIF-Gaussian method \cite{lin2024difgaussian} replaces the density
+field of such renderers with 3D Gaussian primitives, dramatically
+accelerating both training and inference while maintaining high
+fidelity, and is the backbone adopted in this work.
+
+\subsection{3D Gaussian Splatting in Medical Imaging}
+\label{sec:rel:3dgs}
+
+3D Gaussian splatting (3DGS) \cite{kerbl2023gaussiansplats} represents a
+scene as a collection of small anisotropic Gaussians and renders it with
+highly optimized differentiable rasterization. Originally designed for
+novel-view synthesis from dense photographs, 3DGS has been carried into
+medical imaging because its primitives are a natural fit for tomographic
+volumes: opacity and scattering can be rendered along X-ray rays through
+accumulated transparency, and the representation supports large-volume
+domains without the memory cost of dense grids. Sparse-view CBCT
+reconstruction with 3DGS achieves competitive quality at a fraction of
+the training cost of NeRF-style field renderers \cite{lin2024difgaussian}.
+Our work builds on this line by introducing a conditional latent
+stochastic layer on top of the splatting decoder.
+
+\subsection{Conditional Variational Models and Posterior Collapse}
+\label{sec:rel:vae}
+
+Variational autoencoders (VAEs) \cite{kingma2014vae} learn amortized
+posteriors over latent variables by maximizing the evidence lower bound
+(ELBO). Conditional VAEs (CVAEs) \cite{sohn2015cvae} condition both the
+prior and the posterior on auxiliary inputs and are the standard tool
+for structured prediction with latent stochasticity. A well-known
+degeneracy of VAE training is \emph{posterior collapse}: the posterior
+approximation collapses onto the prior, the KL term vanishes, and the
+latent code becomes uninformative \cite{bowman2016generating,
+lucas2019donot}. Common remedies include KL
+annealing, free bits \cite{kingma2016freebits}, and architectural
+changes that limit information leakage from the decoder to the latent
+\cite{zhao2019infovae, dieng2019avoiding}. The GT-conditioned CVAE
+design we propose follows this principle: the auxiliary conditioning of
+the posterior is the ground-truth volume itself, a relationship that is
+available in supervised reconstruction tasks during training but must
+never be used at inference. Our design avoids the degeneracy by routing
+the decoder through the sparse context features, making the latent the
+\emph{only} channel for dense information during training.
+
+\subsection{Neural Processes}
+\label{sec:rel:np}
+
+Neural processes (NPs) \cite{garnelo2018neural} combine the flexibility
+of stochastic processes with the scalability of neural networks: a
+context encoder produces a global representation of observations, which
+conditions the prediction distribution through a latent variable. Neural
+process families such as latent NPs \cite{garnelo2018latent} and
+convolutional NPs \cite{gordon2019convolutional} provide tractable
+variational objectives and permutation-invariant context encoding, and
+have been extended to point clouds and medical data. Our formulation
+adapts this framework to tomographic reconstruction in its conditional
+form: sparse views $C$ play the role of context and determine the prior
+$p(z\mid C)$; the ground-truth volume $Y$ conditions the variational
+posterior $q(z\mid C,Y)$ during training only; and the prior computed
+from $C$ is the sole source of latent stochasticity at deployment.
+
+\subsection{Uncertainty Estimation in Image Reconstruction}
+\label{sec:rel:unc}
+
+Uncertainty in inverse problems is commonly categorized into aleatoric
+(irreducible, sensory/observation noise) and epistemic (model and data
+ambiguity). Sampling-based Bayesian deep learning estimates epistemic
+uncertainty via ensembles \cite{lakshminarayanan2017deep} or
+Monte-Carlo dropout \cite{gal2016dropout}; reconstruction-specific
+methods include probabilistic unrolling and conditional normalizing
+flows. Our approach obtains both flavors in a
+single forward pass: latent Monte-Carlo sampling over the sparse-view
+prior captures epistemic ambiguity over scene content, while a
+homoscedastic observation model quantifies measurement noise. Both are
+essential for clinical decision-making, which is the motivation for the
+GT-conditioned probabilistic design in this paper.

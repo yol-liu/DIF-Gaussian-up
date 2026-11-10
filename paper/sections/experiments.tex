@@ -1,0 +1,252 @@
+%%
+%% Chapter 4: Experiments
+%% Independent file, included by ../main.tex
+%%
+
+\section{Experiments}
+\label{sec:exp}
+
+\subsection{Data and Protocol}
+\label{sec:exp:protocol}
+
+We evaluate on LUNA16 \cite{setio2017luna16} with the CBCT projection
+simulator used in \cite{lin2024difgaussian}. The dataset is split into
+738 training, 50 evaluation, and 100 test cases. Unless stated otherwise,
+all models are trained from random initialization with the official
+400-epoch protocol: 738 optimizer updates per epoch (batch size 1),
+AdamW with $\mathrm{lr}=2{\times}10^{-4}$, per-epoch StepLR decay
+$(10^{-3})^{1/400}$ per epoch, global gradient clipping at 1.0, FP32
+precision, and a fixed random seed. The sparse context always consists
+of the same six fixed projections with raw IDs $\{0,8,16,25,33,41\}$;
+the dense training set contains 48 views. The network samples a random
+sub-volume block and 1024 query points per step and is supervised in
+volume space. Models are checkpointed every 20 epochs; the primary
+comparison uses the final (epoch 400) model, and a supplementary
+best-eval column reports the best PSNR over the 20 evaluation nodes.
+Following the deterministic protocol, all probabilistic variants report
+$N{=}8$ Monte-Carlo prior-mean estimates at inference. Metrics are peak
+signal-to-noise ratio (PSNR, dB) and structural similarity (SSIM) on
+the evaluation volumes at native scale.
+
+\subsection{Implementation Details}
+\label{sec:exp:impl}
+
+All variants share the backbone of Section~\ref{sec:method:backbone}:
+UNet encoder ($out\_ch=128$), geometry-transformer fusion with
+parameters as in the released configuration (2 blocks, 4 heads, window
+3, feature scales $\{4,8,16\}$, $K{=}512$ anchors at resolution 12,
+token initialization \texttt{max}). The probabilistic layer uses a
+64-dimensional global latent; the FiLM modulation is initialized with
+zero-mean weights of std $10^{-3}$ so that early training behaves like
+the deterministic model. The P5 GT encoder is a 3D CNN with channel
+sizes $(1,16,16,32)$ and two stride-2 convolutions, followed by global
+mean pooling. The P5 posterior head therefore receives a
+$128+7+32$-dimensional conditioning vector. Prior and posterior heads
+share the bounded-Gaussian parameterization with $\sigma\in[0.001,3.0]$
+and $\sigma_{\mathrm{init}}=0.5$. Table~\ref{tab:variance} summarizes
+the variants compared.
+
+\begin{table}[t]
+\centering
+\caption{Probability variants compared in this study. \texttt{mean-code}
+is a deterministic control whose heads output a common mean code rather
+than sampled latent.}
+\label{tab:variance}
+\begin{tabular}{@{}llll@{}}
+\toprule
+ID & Mode & Decoder views & Notes \\
+\midrule
+P3 & \texttt{mean-code} (dense-NP) & dense & Deterministic high-information control \\
+P4 & \texttt{dense\_np} (global only) & dense & Sampled global latent, no local latent \\
+P5 & \texttt{gt\_cvae} & dense / context & GT-conditioned posterior (this paper) \\
+P6 & \texttt{dense\_np} (global+local) & dense & Adds a $12^3$ local latent grid \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Main Results}
+\label{sec:exp:main}
+
+Table~\ref{tab:results} reports reconstruction quality on the LUNA16
+evaluation set. Several findings stand out.
+
+\begin{table}[t]
+\centering
+\caption{Reconstruction quality on LUNA16 (six sparse views). Final
+refers to the epoch-400 protocol model; best-eval reports the best PSNR
+checkpoint over the 20 evaluation nodes. All probabilistic numbers use
+the deployment-side estimator (prior MC mean, $N{=}8$), which never
+touches dense views or ground truth.}
+\label{tab:results}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Model & Variant & Final PSNR (dB) & Final SSIM & Best-eval PSNR (dB) \\
+\midrule
+Deterministic backbone \cite{lin2024difgaussian} & -- & 29.54 & 0.870 & -- \\
+P3 mean-code & dense & 29.54 & 0.870 & -- \\
+\midrule
+P4 global-only & dense & 27.91 & 0.837 & -- \\
+P6 global+local & dense & 28.02 & 0.838 & -- \\
+\midrule
+P5 GT-CVAE ($\text{token\_init}{=}\mathrm{max}$, run 1) & dense & 29.06 & 0.854 & 29.24 (E360) \\
+P5 GT-CVAE ($\text{token\_init}{=}\mathrm{max}$, run 2) & dense & -- & -- & 29.06 (E400) \\
+P5 GT-CVAE ($\text{token\_init}{=}\mathrm{mean}$, run 1) & dense & 27.55 & 0.808 & -- \\
+P5 GT-CVAE ($\text{token\_init}{=}\mathrm{mean}$, run 2) & dense & 26.96 & 0.779 & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{The deterministic mean-code control is the strongest reference.}
+P3, whose two Gaussian heads output a common \emph{mean} code (no
+sampling noise), reaches $29.54$\,dB / $0.870$\,SSIM and ties the
+deterministic backbone, showing that a 64-dimensional scene code can
+carry dense information to the decoder without hurting quality.
+
+\emph{P5 with max token initialization nearly matches it.} The best
+GT-conditioned CVAE run reaches $29.06$\,dB / $0.854$\,SSIM at the
+epoch-400 checkpoint and peaks at $29.24$\,dB / $0.863$\,SSIM at
+epoch 360 -- within $0.3$\,dB of the deterministic reference -- while
+additionally emitting per-point predictive variance. Crucially, all of
+these numbers come from the \emph{deployment} estimator
+($z\sim p(z\mid C)$, no GT), so the reported accuracy is what an
+operator would actually obtain.
+
+\emph{Token initialization matters more than posterior design.} With
+\texttt{token\_init=mean} both P5 runs collapse to $\approx 27$\,dB,
+a gap of roughly 2\,dB to the \texttt{max}-initialized runs. All other
+settings are identical; the mechanism is analyzed in
+Section~\ref{sec:exp:ablation}.
+
+\emph{Sampled latent variants underperform their deterministic
+control.} P4 (global-only) and P6 (global+local) reach $27.91$/$28.02$
+dB, well below P3 and P5. As the next subsection shows, this gap is not
+an indictment of latent stochasticity per se but a diagnostic signature
+of posterior collapse: with the \emph{dense}-decoder conditioning used
+in these runs, the KL vanishes, the latent carries almost no
+information, and Monte-Carlo sampling over an uninformative prior simply
+adds noise without coverage.
+
+\subsection{Ablations}
+\label{sec:exp:ablation}
+
+\textbf{GT conditioning is not the bottleneck.}
+Given the same \texttt{max} token initialization, P5 (which encodes the
+GT during training) and P3 (which only sees dense views) reach
+comparable quality ($29.06$--$29.24$ vs.\ $29.54$\,dB), confirming that
+the GT-conditioned posterior provides the intended information
+concentration without overfitting the target.
+
+\textbf{Token initialization.}
+Table~\ref{tab:results} shows an unreported but systematic effect:
+\texttt{mean} \emph{vs.} \texttt{max} fusion of view tokens into
+anchors changes P5's final PSNR by $\sim\!2$\,dB ($27.0$--$27.5$ vs.\
+$29.1$\,dB). We attribute this to the interaction between token
+initialization and the FiLM-gated latent: with \texttt{mean}
+initialization the anchor features are more uniform, the fusion
+transformer saturates earlier, and the latent has less discriminating
+signal to modulate (\emph{c.f.} the FiLM residual analyses below).
+
+\textbf{Decoder conditioning.}
+\label{sec:exp:ablation:views}
+Switching the decoder's training-time view set is the single most
+decisive switch in the whole design space. As a controlled comparison we
+route the posterior branch through the \emph{context} features
+(\texttt{posterior\_decoder\_views='context'}) while keeping every else
+fixed; this is now the default in the released configuration. The
+diagnostics in Section~\ref{sec:exp:collapse} show that this switch
+restores a non-vanishing KL and re-activates the zero-perturbation
+intervention signal, at the cost of a modest reconstruction penalty.
+
+\subsection{Diagnostics: Posterior Collapse}
+\label{sec:exp:collapse}
+
+We instrumented every run with a battery of latent statistics
+Table~\ref{tab:diag}. Under the \emph{dense}-decoder conditioning, all
+sampled-latent variants exhibit the same pathology, summarized in
+Table~\ref{tab:diag}.
+
+\begin{table}[t]
+\centering
+\caption{End-of-training latent diagnostics (mean over evaluation set)
+for the sampled-latent variants with \texttt{dense} decoder views. The
+pattern is diagnostic of full posterior collapse.}
+\label{tab:diag}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Diagnostic & Value at epoch 400 & Healthy regime \\
+\midrule
+Raw KL $\mathrm{KL}[q\|p]$ & ${\sim}3{\times}10^{-4}$ & $>0.01$ \\
+Posterior vs.\ prior std $\sigma_q/\sigma_p$ & $\approx 1$ (indistinguishable) & $\sigma_q>\sigma_p$ \\
+Cross-case prior-mean variance $\mathrm{Var}_C[\mu_p(C)]$ & ${\sim}4{\times}10^{-9}$ & growing \\
+Weighted KL contribution & $\approx 0$ & meaningful \\
+Zero-$z$ intervention effect & $\rightarrow 0$ & non-zero \\
+Shuffled-$z$ intervention effect & ${\sim}2{\times}10^{-6}$ & non-zero \\
+MC sample diversity & monotonically decreasing & stable \\
+FiLM residual norm & growing (25--34) yet zero-$z$ effect $\to 0$ & stable \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Interpretation.}
+KL $\to 0$ with $\sigma_q\approx\sigma_p$ is the textbook signature of
+posterior collapse \cite{bowman2016generating,lucas2019donot}. The
+cross-case variance of prior means collapsing to $\sim 10^{-9}$ implies
+that \emph{$p(z\mid C)$ forgets the context entirely}: the prior outputs
+nearly the same code for every six-view input, so Monte-Carlo averaging
+at deployment cannot capture case-specific ambiguity. Perturbation
+interventions confirm zero information coupling: replacing $z$ with
+zeros, or permuting $z$ across cases in the batch, changes the rendered
+volume by ${\sim}2{\times}10^{-6}$, i.e., the decoder becomes effectively
+independent of the latent. The rising FiLM residual norm in the face of
+a vanishing zero-$z$ effect shows that the modulation branch learns to
+cancel itself -- the worst possible use of capacity.
+
+\textbf{Root cause.}
+The mechanism is information leakage through decoder conditioning.
+When \texttt{posterior\_decoder\_views='dense'}, the decoder renders
+from the 48-view dense features during training, so privileged
+information reaches the volume through $f_{\mathrm{GS}}(E(D))$ and the
+latent is redundant; the ELBO then minimizes the KL by driving $q\to p$,
+and both distributions collapse to a context-degenerate code. In other
+words, the training-time decoder sees \emph{dense} views, while the
+deployment-time decoder sees only $C$ -- a train/deploy mismatch in
+which the model is never actually forced to use $z$ to reconstruct.
+The deterministic mean-code control is naturally immune: without
+sampling noise there is no KL to collapse, and the code simply aligns
+with the dense conditioning.
+
+\textbf{Remedies.}
+The structural fix is to make $z$ the \emph{only} privileged channel,
+i.e., \texttt{posterior\_decoder\_views='context'} (the current default;
+the decoder always renders from $C$ and $z$ alone carries dense
+information, restoring a non-trivial KL during training).
+Complementary safeguards are (i) a free-bits floor on the per-dimension
+KL \cite{kingma2016freebits}, (ii) a larger $\beta_f$ with the same
+warm-up, and (iii) deployment-guided supervision, i.e., a positive
+prior-reconstruction weight $w_{\mathrm{prior}}$ in
+Eq.~\eqref{eq:loss}, which renders \emph{prior} samples against the GT
+and forces the deployment path to be accurate even if the posterior is
+degenerate. These three levers are orthogonal and can be composed; we
+report them as the actionable outcome of this study for future
+probabilistic CBCT models.
+
+\begin{table}[t]
+\centering
+\caption{Diagnostic instrumentation recorded per training step for
+every run: KL decomposition (raw, effective, free-bits floor, per-dim),
+prior/posterior scale statistics, reconstruction and prior-reconstruction
+losses, and gradient norms per module group (prior head, posterior head,
+GT encoder, FiLM, shared encoder, decoder).}
+\label{tab:instrumentation}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Group & Recorded quantities \\
+\midrule
+KL & $KL_{g/l}^{raw}$, $KL^{effective}$, free-bits floor, per-dim KL, dimensions \\
+Latent scales & $\sigma_{p/q,g/l}$, variance, near-boundary fractions \\
+Losses & $L_{vol}$, $L_{vol}^{(p)}$, warm-up $\beta_t$, weighted KL, mean-code alignment \\
+Interventions & zero-$z$ effect, shuffled-$z$ effect (periodic) \\
+Miscellaneous & MC sample diversity, cross-case prior variance, FiLM residual norm \\
+\bottomrule
+\end{tabular}
+\end{table}

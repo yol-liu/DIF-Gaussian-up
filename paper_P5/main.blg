@@ -1,0 +1,62 @@
+This is BibTeX, Version 0.99e (TeX Live 2026)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: main.aux
+The style file: elsarticle-num.bst
+Database file #1: refs.bib
+Warning--empty pages in kerbl2023gaussiansplats
+Warning--empty pages in lin2024difgaussian
+Warning--empty pages in song2021scorebased
+Warning--empty pages in mildenhall2020nerf
+Warning--empty pages in kingma2014vae
+Warning--empty pages in sohn2015cvae
+Warning--empty pages in bowman2016generating
+Warning--empty pages in lucas2019donot
+Warning--empty pages in kingma2016freebits
+Warning--empty pages in zhao2019infovae
+Warning--empty pages in dieng2019avoiding
+Warning--empty pages in garnelo2018neural
+Warning--empty pages in gordon2019convolutional
+Warning--empty pages in lakshminarayanan2017deep
+Warning--empty pages in gal2016dropout
+You've used 17 entries,
+            2952 wiz_defined-function locations,
+            745 strings with 8611 characters,
+and the built_in function-call counts, 4993 in all, are:
+= -- 323
+> -- 263
+< -- 0
++ -- 99
+- -- 82
+* -- 325
+:= -- 694
+add.period$ -- 18
+call.type$ -- 17
+change.case$ -- 17
+chr.to.int$ -- 0
+cite$ -- 32
+duplicate$ -- 182
+empty$ -- 674
+format.name$ -- 99
+if$ -- 1312
+int.to.chr$ -- 0
+int.to.str$ -- 17
+missing$ -- 17
+newline$ -- 60
+num.names$ -- 17
+pop$ -- 176
+preamble$ -- 1
+purify$ -- 0
+quote$ -- 0
+skip$ -- 350
+stack$ -- 0
+substring$ -- 16
+swap$ -- 4
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 0
+warning$ -- 15
+while$ -- 19
+width$ -- 19
+write$ -- 145
+(There were 15 warnings)

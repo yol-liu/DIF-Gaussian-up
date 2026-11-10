@@ -1,0 +1,92 @@
+\begin{thebibliography}{10}
+\expandafter\ifx\csname url\endcsname\relax
+  \def\url#1{\texttt{#1}}\fi
+\expandafter\ifx\csname urlprefix\endcsname\relax\def\urlprefix{URL }\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\href#1#2{#2} \def\path#1{#1}\fi
+
+\bibitem{kerbl2023gaussiansplats}
+B.~Kerbl, G.~Kopanas, T.~Leimk{\"u}hler, G.~Drettakis, 3d gaussian splatting
+  for real-time radiance field rendering, in: ACM SIGGRAPH, 2023.
+\newblock \href {https://doi.org/10.1145/3592433} {\path{doi:10.1145/3592433}}.
+
+\bibitem{lin2024difgaussian}
+Y.~Lin, J.~Yang, Y.~Huang, et~al., {DIF-Gaussian}: Leveraging 3d gaussian
+  splatting for 3d cone-beam {CT} imaging, in: Medical Image Computing and
+  Computer Assisted Intervention (MICCAI), Springer, 2024.
+
+\bibitem{song2021scorebased}
+Y.~Song, J.~Sohl-Dickstein, D.~P. Kingma, A.~Kumar, S.~Ermon, B.~Poole,
+  Score-based generative modeling through stochastic differential equations,
+  in: International Conference on Learning Representations (ICLR), 2021.
+
+\bibitem{mildenhall2020nerf}
+B.~Mildenhall, P.~P. Srinivasan, M.~Tancik, J.~T. Barron, R.~Ramamoorthi,
+  R.~Ng, {NeRF}: Representing scenes as neural radiance fields for view
+  synthesis, in: European Conference on Computer Vision (ECCV), 2020.
+
+\bibitem{kingma2014vae}
+D.~P. Kingma, M.~Welling, Auto-encoding variational bayes, in: International
+  Conference on Learning Representations (ICLR), 2014.
+
+\bibitem{sohn2015cvae}
+K.~Sohn, H.~Lee, X.~Yan, Learning structured output representation using deep
+  conditional generative models, in: Advances in Neural Information Processing
+  Systems (NeurIPS), 2015.
+
+\bibitem{bowman2016generating}
+S.~R. Bowman, L.~Vilnis, O.~Vinyals, A.~M. Dai, R.~Jozefowicz, S.~Bengio,
+  Generating sentences from a continuous space, in: Conference on Computational
+  Natural Language Learning (CoNLL), 2016.
+
+\bibitem{lucas2019donot}
+J.~Lucas, G.~Tucker, R.~Grosse, M.~Norouzi, Don't blame the {ELBO}! a linear
+  {VAE} perspective on posterior collapse, in: Advances in Neural Information
+  Processing Systems (NeurIPS), 2019.
+
+\bibitem{kingma2016freebits}
+D.~P. Kingma, T.~Salimans, R.~Jozefowicz, X.~Chen, I.~Sutskever, M.~Welling,
+  Improved variational inference with inverse autoregressive flow, in: Advances
+  in Neural Information Processing Systems (NeurIPS), 2016.
+
+\bibitem{zhao2019infovae}
+S.~Zhao, J.~Song, S.~Ermon, {InfoVAE}: Balancing learning and inference in
+  variational autoencoders, in: AAAI Conference on Artificial Intelligence,
+  2019.
+
+\bibitem{dieng2019avoiding}
+A.~B. Dieng, Y.~Kim, A.~M. Rush, D.~M. Blei, Avoiding latent variable collapse
+  with generative skip models, in: International Conference on Artificial
+  Intelligence and Statistics (AISTATS), 2019.
+
+\bibitem{garnelo2018neural}
+M.~Garnelo, D.~Rosenbaum, C.~J. Maddison, T.~Ramalho, D.~Saxton, M.~Shanahan,
+  Y.~W. Teh, D.~J. Rezende, S.~M.~A. Eslami, Conditional neural processes, in:
+  International Conference on Machine Learning (ICML), 2018.
+
+\bibitem{garnelo2018latent}
+M.~Garnelo, J.~Schwarz, D.~Rosenbaum, F.~Viola, D.~J. Rezende, S.~M.~A. Eslami,
+  Y.~W. Teh, Neural processes, arXiv preprint arXiv:1807.01622 (2018).
+
+\bibitem{gordon2019convolutional}
+J.~Gordon, W.~P. Bruinsma, A.~Y.~K. Foong, J.~Requeima, Y.~Dubois, R.~E.
+  Turner, Convolutional conditional neural processes, in: International
+  Conference on Learning Representations (ICLR), 2020.
+
+\bibitem{lakshminarayanan2017deep}
+B.~Lakshminarayanan, A.~Pritzel, C.~Blundell, Simple and scalable predictive
+  uncertainty estimation using deep ensembles, in: Advances in Neural
+  Information Processing Systems (NeurIPS), 2017.
+
+\bibitem{gal2016dropout}
+Y.~Gal, Z.~Ghahramani, Dropout as a bayesian approximation: Representing model
+  uncertainty in deep learning, in: International Conference on Machine
+  Learning (ICML), 2016.
+
+\bibitem{setio2017luna16}
+A.~A.~A. Setio, A.~Traverso, T.~de~Bel, M.~S.~N. Berens, C.~van~den Bogaard,
+  P.~Cerello, et~al., Validation, comparison, and combination of algorithms for
+  automatic detection of pulmonary nodules in computed tomography images: The
+  {LUNA16} challenge, Medical Image Analysis 42 (2017) 1--13.
+
+\end{thebibliography}

@@ -2,8 +2,8 @@ gpu=0
 
 n_view=6
 dst_name=/data1/workspace/C2RV-CBCT/data/LUNA16
-name=DIFG-6v_1005_1947
-n_epoch=350
+name=DIFG-6v_1005_1948
+n_epoch=360
 scale=1.0
 
 CUDA_VISIBLE_DEVICES=$gpu python code/evaluate.py \

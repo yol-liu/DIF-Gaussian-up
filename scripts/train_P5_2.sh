@@ -1,13 +1,16 @@
 gpus=0
 IFS=',' read -r -a devices <<< "$gpus"
 nproc=${#devices[@]}
-cfg_path=./configs/experiment_plan/stage1/prob-dense-np.yaml
+cfg_path=./configs/experiment_plan/stage1/prob-gt-cvae.yaml
 
 n_view=6
 dst_name=LUNA16
 name=DIFG-${n_view}v_$(date +%m%d_%H%M)
 
 mkdir -p ./logs/$name
+
+# 训练解释器: 不依赖外部 conda 激活，直接指向 dif-gaussian-torch28 环境
+export PATH=/data1/workspace/DIF-Gaussian-up-new/.conda/dif-gaussian-torch28/bin:$PATH
 
 # 双 GPU DDP: 2 个进程分别绑定 GPU 0 / 1，NCCL 负责梯度同步
 # wandb 日志: 首次使用前需 `wandb login <API_KEY>`，

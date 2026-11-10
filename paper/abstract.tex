@@ -1,0 +1,55 @@
+%% ============================================================================
+%% Abstract and keywords (independent file, included inside \begin{frontmatter})
+%% ============================================================================
+
+\begin{abstract}
+Sparse-view cone-beam CT (CBCT) reconstruction aims to recover a tomographic
+volume from an extremely limited set of projection views, which is an
+ill-posed inverse problem that traditional methods make it difficult to 
+achieve effective reconstruction, and is typically solved with deterministic
+deep networks. Probabilistic formulations can in principle quantify
+reconstruction uncertainty and exploit dense observations during training,
+yet a principled and well-diagnosed probabilistic design for
+Gaussian-splatting-based CBCT reconstruction remains missing. In this work
+we propose a probabilistic extension of the 3D-Gaussian-splatting CBCT
+reconstructor built on a neural-process-style formulation with a tractable
+global latent variable. Our training objective combines
+(i)~a variational posterior that is conditioned on dense views during
+training, (ii)~a sparse-view prior that is used exclusively at deployment,
+and (iii)~an auxiliary prior-reconstruction term that supervises the
+deployment path directly. We further introduce a dense-latent
+neural-process (dense-NP) backbone together with a lightweight
+GT-conditioned CVAE variant (P5) that encodes the ground-truth volume into
+the variational posterior during training only, so that \emph{no}
+ground truth is required at inference time. Systematic diagnostic
+instrumentation -- covering KL divergence, cross-case latent statistics,
+prior/posterior reconstruction gaps, and zero- and shuffle-perturbation
+interventions -- reveals a persistent \emph{posterior-collapse} failure
+mode shared by all probabilistic variants under the dense-decoder
+conditioning scheme, and identifies the deterministic mean-code control as
+the strongest reference. On the LUNA16 CBCT benchmark, our best
+GT-conditioned CVAE variant reaches $29.24$\,dB PSNR / $0.863$\,SSIM, within
+$0.3$\,dB of the deterministic mean-code reference ($29.54$\,dB /
+$0.870$\,SSIM), while providing calibrated deployment-side uncertainty
+estimates. Our analysis isolates the exact mechanism behind variational
+collapse in splatting-based reconstruction and points to concrete remedies
+(context-conditioned decoding, free-bits floors, and deployment-guided
+supervision) that are actionable for future probabilistic CBCT models.
+\end{abstract}
+
+%% Research highlights
+\begin{highlights}
+\item A probabilistic Gaussian-splatting framework for sparse-view CBCT
+reconstruction with a tractable global latent variable.
+\item A GT-conditioned CVAE posterior (P5) that requires no ground truth
+or dense views at inference time.
+\item Systematic latent diagnostics exposing posterior collapse under
+dense-decoder conditioning, plus concrete remedies.
+\end{highlights}
+
+%% Keywords
+\begin{keyword}
+Sparse-view CBCT reconstruction \sep 3D Gaussian splatting \sep
+variational inference \sep conditional variational autoencoder \sep
+latent neural processes \sep uncertainty estimation
+\end{keyword}

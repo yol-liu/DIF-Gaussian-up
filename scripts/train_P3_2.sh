@@ -1,7 +1,7 @@
 gpus=1
 IFS=',' read -r -a devices <<< "$gpus"
 nproc=${#devices[@]}
-cfg_path=./configs/experiment_plan/stage2/detail-dense-np-local-latent.yaml
+cfg_path=./configs/experiment_plan/stage1/prob-dense-mean-code.yaml
 
 n_view=6
 dst_name=LUNA16
@@ -18,7 +18,7 @@ CUDA_VISIBLE_DEVICES=$gpus nohup python -m torch.distributed.run \
     --nproc_per_node "$nproc" \
     code/train.py \
         --name $name \
-        --batch_size 4 \
+        --batch_size 2 \
         --epoch 400 \
         --dst_name $dst_name \
         --num_views $n_view \

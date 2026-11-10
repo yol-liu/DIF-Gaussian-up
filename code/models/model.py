@@ -224,7 +224,7 @@ class DIF_Gaussian(Recon_base):
             }
         }
 
-    def forward_points(self, feats_dict, data):
+    def forward_points(self, feats_dict, data, z=None):
         # 1. multi-view pixel-aligned features + max-pooling
         # (dense query points keep max fusion in this milestone; full
         # cross-attention over ~256^3 points would be prohibitively expensive)
@@ -249,6 +249,10 @@ class DIF_Gaussian(Recon_base):
         if self.point_fusion == 'geometry_attention':
             p_feats = self.point_view_fusion(feats_dict['feats_proj'], feats_dict['point_feature_maps'], interp_feats, data)
             feats_dict['diagnostics'].update(self.point_view_fusion.last_diagnostics)
+        if z is not None and getattr(self, 'z_point_proj', None) is not None:
+            # Latent pathway: additive zero-init injection so z reaches the main
+            # per-point evidence path, not only the FiLM-modulated anchor features.
+            p_feats = p_feats + self.z_point_proj(z).unsqueeze(-1)
         p_feats = torch.cat([p_feats, interp_feats], dim=1)
 
         # 3. point-wise prediction

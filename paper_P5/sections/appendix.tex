@@ -1,0 +1,163 @@
+%%
+%% Appendix: Key code snippets
+%% Independent file, included by ../main.tex
+%%
+
+\section{Key Code Snippets}
+\label{app:code}
+
+We provide the three most relevant fragments of the released
+implementation for reproducibility: the lightweight GT encoder
+(Listing~\ref{lst:gt_encoder}), the conditional posterior path inside
+the probabilistic model (Listing~\ref{lst:posterior}), and the released
+configuration used for the reported results
+(Listing~\ref{lst:config}).
+
+\subsection{GT Encoder}
+\label{app:code:gt}
+
+The GT encoder is a lightweight 3D CNN that maps the ground-truth volume
+to a feature volume and mean-pools it into a 32-dimensional global
+descriptor $h_Y$. It is instantiated only in \texttt{gt\_cvae} mode and
+only consumed during training.
+
+\begin{lstlisting}[language=Python, caption={models/gt\_encoder.py: the
+GT encoder.}, label={lst:gt_encoder}]
+class GTEncoder(nn.Module):
+    """Maps a GT CT volume to a feature volume, then pools a global
+    feature for the variational posterior."""
+
+    def __init__(self, in_ch=1, out_ch=32, mid_ch=16):
+        super().__init__()
+        self.out_ch = out_ch
+        self.net = nn.Sequential(
+            nn.Conv3d(in_ch, mid_ch, kernel_size=3, padding=1),
+            nn.GroupNorm(4, mid_ch),
+            nn.SiLU(inplace=True),
+            nn.Conv3d(mid_ch, mid_ch, kernel_size=3, stride=2, padding=1),
+            nn.GroupNorm(4, mid_ch),
+            nn.SiLU(inplace=True),
+            nn.Conv3d(mid_ch, out_ch, kernel_size=3, stride=2, padding=1),
+            nn.GroupNorm(4, out_ch),
+            nn.SiLU(inplace=True),
+        )
+
+    def forward(self, gt_volume, anchor_xyz=None):
+        """gt_volume: [B, 1, D, H, W]  ->  feat_volume + gt_global_feat."""
+        if gt_volume.dim() == 4:
+            gt_volume = gt_volume.unsqueeze(1)
+        feat_volume = self.net(gt_volume)
+        gt_global_feat = feat_volume.mean(dim=(2, 3, 4))   # [B, 32]
+        return {'feat_volume': feat_volume,
+                'gt_global_feat': gt_global_feat}
+\end{lstlisting}
+
+\subsection{Conditional Posterior Path}
+\label{app:code:posterior}
+
+During training the sparse context is encoded once into the pooled
+representation $\psi(C)$; in \texttt{gt\_cvae} mode the posterior head
+instead receives $\psi(C)\oplus h_Y$ computed from the ground-truth
+volume. The decoder always renders from \emph{context} features (the
+released \texttt{posterior\_decoder\_views='context'}), so the FiLM
+modulated latent is the only privileged channel.
+
+\begin{lstlisting}[language=Python, caption={models/dense\_probability.py:
+context encoding (top) and the conditional posterior path (middle), with
+FiLM modulation of the decoder features (bottom).},
+label={lst:posterior}]
+def encode_context(self, data, prepare=True):
+    clean = context_inputs(data)
+    if prepare:
+        clean = self.prepare_views(clean)
+    features = self.encode_projs(clean)
+    pooled = torch.cat([features['anchor_feats'].mean(-1),
+                        observation_descriptor(clean)], -1)
+    return ContextState(features, clean, pooled, grid=None)
+
+def infer_posterior(self, data, context, dense=None):
+    """GT-conditioned CVAE (gt_cvae): condition q(z | C, Y) on the GT
+    volume, not on dense views. GT encoder is never called when
+    gt_volume is None."""
+    if self.mode == 'dense_np':
+        dense = dense if dense is not None else self.encode_dense(data)
+        pooled, grid = dense.pooled, dense.grid     # 48 dense views
+    else:
+        if data.get('gt_volume') is None:
+            raise ValueError('gt_cvae posterior requires gt_volume')
+        gt = self.gt_encoder(data['gt_volume'],
+                             context.data['points_gs'])
+        pooled = torch.cat([context.pooled,
+                            gt['gt_global_feat']], -1)   # 128+7+32
+        grid = None                                     # use_local=False
+    return self.posterior_head(pooled), grid
+
+# in sample_state(): draw z and modulate the *context* features
+mu, lv = posterior if posterior is not None else prior
+z_g = mu if mean else reparameterize(mu, lv, generator)
+features['gs_params']['feats'] = self.feature_film(
+    context.features['gs_params']['feats'], z_g)
+\end{lstlisting}
+
+\subsection{Released Configuration}
+\label{app:code:config}
+
+The released configuration (which produced the results reported in
+Section~\ref{sec:exp}) fixes the mode to \texttt{gt\_cvae}, uses a
+64-dimensional global latent with no local latent
+(\texttt{use\_local: false}), a per-dimension free-bits floor of
+$0.5$ nats, an annealed $\beta_f=2{\times}10^{-2}$, and the
+\emph{prior mean} Monte-Carlo estimator with $N{=}8$ samples at
+inference.
+
+\begin{lstlisting}[caption={configs/experiment\_plan/stage1/
+prob-gt-cvae.yaml (excerpt): the released model, objective and
+evaluation blocks. \texttt{posterior\_decoder\_views} is not a config
+key; the code default is \texttt{'context'}.},
+label={lst:config}]
+model:
+  image_encoder:
+    out_ch: 128
+  anchor_fusion: geometry_transformer
+  point_fusion: max
+  multiview_transformer:
+    d_model: 128
+    num_heads: 4
+    num_blocks: 2
+    feature_scales: [4, 8, 16]
+    samples_per_scale: 5
+    spatial_window: 3        # window of +-1 anchor neighbors
+    token_init: max          # max-fused anchor tokens (ablation: mean)
+  gs:
+    t: 512
+    res: 12
+  probabilistic:
+    mode: gt_cvae            # GT-conditioned CVAE posterior
+    objective: joint
+    normalization: groupnorm_anchor_instance
+    film_init_std: 1.0e-3    # zero-mean FiLM init (deterministic start)
+    train_samples: 1
+    latent:
+      global_dim: 64         # z in R^64, FiLM-injected
+      use_local: false       # global latent only
+      sigma_min: 0.001
+      sigma_max: 3.0
+      initial_sigma: 0.5
+    reconstruction:
+      likelihood: mse
+      observation_sigma: 0.1   # sigma_obs for the Gaussian likelihood
+      reduction: mean_query
+    kl:
+      beta_final: 2.0e-02      # annealed over warmup
+      warmup_steps: 500
+      free_bits: 0.5           # per-dimension KL floor (nats)
+      free_bits_order: per_case
+      reduction: sum_latent_mean_batch
+    evaluation:
+      estimator: prior_mc_mean  # z ~ p(z|C), mean over samples
+      num_samples: 8
+dataset:
+  paired_views:
+    dense_count: 48             # training-only side information
+    context_counts: [6]         # deployment view budget
+\end{lstlisting}

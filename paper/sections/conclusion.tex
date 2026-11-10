@@ -1,0 +1,47 @@
+%%
+%% Chapter 5: Conclusion
+%% Independent file, included by ../main.tex
+%%
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a probabilistic redesign of Gaussian-splatting-based
+sparse-view CBCT reconstruction built on a latent neural process, with
+particular emphasis on the P5 GT-conditioned CVAE variant. P5 borrows
+ground-truth information during training through a lightweight 3D CNN
+posterior encoder, yet discards both the GT encoder and the dense views
+at deployment, sampling exclusively from a sparse-view prior. On the
+LUNA16 benchmark with six projections, P5 reaches $29.24$\,dB PSNR /
+$0.863$\,SSIM (best-eval), within $0.3$\,dB of the deterministic
+reference, while providing per-point predictive variance at no
+additional inference cost.
+
+The central methodological contribution of this paper is diagnostic
+rather than architectural. Through systematic instrumentation -- KL
+decomposition, cross-case latent statistics, prior/posterior
+reconstruction gaps, and zero- and shuffle-perturbation interventions --
+we demonstrated that all sampled-latent variants trained with
+dense-view decoder conditioning suffer a complete posterior collapse:
+the KL vanishes, the prior forgets the context, and the decoder becomes
+independent of the latent. We traced this failure to a train/deploy
+information mismatch, i.e., privileged dense views reaching the decoder
+directly during training, and derived three orthogonal, actionable
+remedies: context-conditioned decoding (now the default in the released
+configuration), free-bits floors, and deployment-guided
+prior-reconstruction supervision.
+
+\textbf{Future work} includes (i) validating the collapsed-vs-healthy
+regime under the context-conditioned decoder at the full 400-epoch
+protocol, (ii) extending P5 to hierarchical local latents for
+fine-grained uncertainty maps, (iii) calibrating the predictive
+variance against real reconstruction errors for use in dose-guided
+adaptive radiotherapy, and (iv) transferring the diagnostic battery to
+other modality-paired inverse problems (e.g., sparse-view MRI,
+low-dose PET) where the information-flow argument applies verbatim.
+
+\section*{Acknowledgements}
+
+The authors gratefully acknowledge the computing resources and the
+LUNA16 challenge data \cite{setio2017luna16}. The authors declare no
+conflict of interest.

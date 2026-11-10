@@ -104,6 +104,13 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         self.feature_film = FeatureFiLM(self.image_encoder.out_ch,
                                        self.global_dim + (self.local_dim if self.use_local else 0))
         nn.init.normal_(self.feature_film.net[-1].weight, std=self.probability['film_init_std'])
+        z_forcing = self.probability['z_forcing']
+        if z_forcing['enabled']:
+            # Zero-init additive projection of z onto the main per-point evidence path.
+            self.z_point_proj = nn.Linear(self.global_dim, self.image_encoder.out_ch)
+            nn.init.zeros_(self.z_point_proj.weight)
+            nn.init.zeros_(self.z_point_proj.bias)
+        self.ctx_drop_prob = float(z_forcing['ctx_drop_prob'])
         configure_normalization(self, self.probability['normalization'])
         self.reference = None
 
@@ -170,7 +177,7 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         return mu.transpose(1, 2).reshape(b, -1, r, r, r), lv.transpose(1, 2).reshape(b, -1, r, r, r)
 
     def sample_state(self, context, prior, posterior=None, posterior_grid=None, mean=False, generator=None,
-                     decode_context=None):
+                     decode_context=None, ctx_drop=None):
         # Latent statistics always come from C; decode_context only chooses the FiLM-modulated features/geometry.
         decode_context = decode_context if decode_context is not None else context
         mu, lv = posterior if posterior is not None else prior
@@ -196,6 +203,11 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         features = dict(decode_context.features)
         features['gs_params'] = dict(decode_context.features['gs_params'])
         features['gs_params']['feats'] = self.feature_film(decode_context.features['gs_params']['feats'], conditioning)
+        if ctx_drop is not None and 'feats_proj' in features:
+            # Skip-dropout: cut the direct pixel-aligned evidence path for the dropped
+            # cases so reconstruction must flow through the latent-modulated anchor path.
+            # feats_proj is [B, V, C, H, W]; ctx_drop is per-case [B] -> [B, 1, 1, 1, 1].
+            features['feats_proj'] = features['feats_proj'] * ctx_drop.view(-1, 1, 1, 1, 1)
         if 'diagnostics' in features:
             features['diagnostics'] = dict(features['diagnostics'])
         return ProbabilityState(decode_context, features, z_g, z_grid, info)
@@ -216,7 +228,7 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         for key in self.registered_point_keys:
             if key in query_chunk:
                 data[key] = query_chunk[key]
-        return self.forward_points(state.features, data)
+        return self.forward_points(state.features, data, z=state.z_g)
 
     def decode_chunked(self, state, chunk_size):
         if chunk_size < 1:
@@ -279,6 +291,11 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         if training:
             self.record_feature_gradient('sparse_conditioning', context.pooled)
         prior = self.infer_prior(context)
+        ctx_drop = None
+        if training and self.ctx_drop_prob > 0:
+            # Per-case skip-dropout mask, shared across MC samples and the prior branch.
+            keep = torch.rand(data['projs'].shape[0], device=data['projs'].device)
+            ctx_drop = (keep >= self.ctx_drop_prob).to(context.features['feats_proj'].dtype)
         posterior, posterior_grid, decode_context = None, None, context
         if use_posterior:
             if self.probability['objective'] == 'frozen_reference':
@@ -297,7 +314,7 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
         for index in range(count):
             state = self.sample_state(context, prior, posterior, posterior_grid,
                                       mean=mode.endswith('mean') and mode != 'prior_mc_mean', generator=generator,
-                                      decode_context=decode_context)
+                                      decode_context=decode_context, ctx_drop=ctx_drop)
             prediction = self.decode_points(state, decode_context.data) if training else self.decode_chunked(state, eval_npoint)
             if training or return_samples:
                 samples.append(prediction)
@@ -312,9 +329,10 @@ class DenseProbabilisticDIFGaussian(DIF_Gaussian):
                 m2 = m2 + delta * (prediction - mean_prediction)
         prior_samples = []
         if training and self.probability['prior_reconstruction_weight'] > 0:
-            # Deployment branch: same C features, z (and local grid) drawn from p(z|C); never reads D or GT.
+            # Deployment branch: same C features, z (and local grid) fixed at the prior mean
+            # (denoised target for the prior head); never reads D or GT.
             for _ in range(count):
-                prior_state = self.sample_state(context, prior, generator=generator)
+                prior_state = self.sample_state(context, prior, mean=True, ctx_drop=ctx_drop)
                 prior_samples.append(self.decode_points(prior_state, context.data))
         variance = m2 / (count - 1) if count > 1 else None
         rec = self.probability['reconstruction']

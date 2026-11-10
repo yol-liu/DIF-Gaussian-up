@@ -1,0 +1,95 @@
+%%
+%% Chapter 1: Introduction
+%% Independent file, included by ../main.tex
+%%
+
+\section{Introduction}
+\label{sec:intro}
+
+Cone-beam computed tomography (CBCT) is a cornerstone of image-guided
+procedures in radiation therapy and interventional radiology, offering
+volumetric imaging with compact gantry geometries. Clinical workflows,
+however, place hard limits on the number of projection views that can be
+acquired: fewer views reduce radiation dose and shorten scan times, but
+dramatically undersample the Fourier domain of the object. Sparse-view CBCT
+reconstruction -- recovery of a high-quality volume from a handful of
+projections, typically far below the hundreds required by analytical
+reconstruction -- is therefore an ill-posed inverse problem whose solution
+requires strong prior knowledge of anatomy.
+
+Deep learning has become the dominant tool for this task. Neural
+reconstruction methods range from direct 2D$\to$3D back-projection networks
+to score-based and diffusion models, and recent work has shown that
+explicit scene representations such as 3D Gaussian splatting (3DGS)
+\cite{kerbl2023gaussiansplats} provide an outstanding inductive bias for
+tomographic volumes: compact, differentiable, and easily supervised by
+projection consistency. The DIF-Gaussian framework \cite{lin2024difgaussian}
+demonstrated that a splatting-based reconstructor can produce accurate
+volumes from as few as six cone-beam projections.
+
+Despite these advances, the vast majority of sparse-view CBCT models are
+\emph{deterministic}: they map a fixed set of views to a single volume and
+output no measure of confidence. This is unsatisfactory in a clinical
+setting, where (i)~reconstruction noise and ambiguity are spatially
+inhomogeneous and task-relevant, and (ii)~downstream planning decisions
+(e.g., dose painting or target delineation) should ideally consume
+calibrated uncertainty, not a point estimate. Probabilistic reconstruction
+addresses this by placing a distribution over latent scene content and
+marginalizing it at inference.
+
+A principled probabilistic design, however, must reconcile two competing
+goals. On one hand, training can exploit \emph{dense} observations (many
+views) that are too expensive to acquire at deployment; conditioning a
+variational posterior on these dense views concentrates information and
+tightens the evidence lower bound. On the other hand, the deployment-time
+input is exclusively the \emph{sparse} set, so the model must not silently
+depend on information -- neither dense views nor ground-truth volume -- that
+is unavailable at inference. Any mismatch between the training-time and
+deployment-time information flow is a latent bug, and, as we show, a
+surprisingly common one: it is the direct cause of \emph{posterior
+collapse}, in which the learned variational posterior degenerates to the
+uninformative prior and the latent variable carries no information.
+
+In this paper we design, build, and rigorously diagnose a probabilistic
+extension of the Gaussian-splatting CBCT reconstructor. Our contributions
+are:
+
+\begin{enumerate}
+\item \textbf{A neural-process-style probabilistic formulation for
+splatting-based CBCT reconstruction.} We inject a tractable global latent
+variable into the Gaussian-splatting decoder through feature-wise linear
+modulation (FiLM), yielding a latent neural process (dense-NP) whose prior
+$p(z\mid C)$ is a function of the sparse context views $C$ alone.
+
+\item \textbf{A GT-conditioned CVAE variant (P5).} During training only, a
+lightweight 3D CNN encodes the ground-truth volume into the variational
+posterior $q(z\mid C,Y)$, giving the model access to dense target
+information while the objective simultaneously supervises the
+deployment-side prior samples. At inference $q$ is discarded and the model
+uses $p(z\mid C)$ exclusively; \emph{no} ground truth or dense views are
+required.
+
+\item \textbf{Systematic latent diagnostics and a concrete failure
+analysis.} We instrument training with KL tracking, cross-case latent
+statistics, prior/posterior reconstruction gaps, and zero- and
+shuffle-perturbation interventions. This isolates posterior collapse as a
+persistent failure mode of a seemingly reasonable design choice --
+conditioning the decoder on dense-view features during training
+(\texttt{posterior\_decoder\_views='dense'}) -- and identifies a
+deterministic mean-code control as the strongest reference.
+
+\item \textbf{State-of-the-art sparse-view results with calibrated
+uncertainty.} On the LUNA16 CBCT benchmark with six input views, our best
+GT-conditioned CVAE variant reaches $29.24$\,dB PSNR / $0.863$\,SSIM, within
+$0.3$\,dB of the deterministic mean-code reference ($29.54$\,dB /
+$0.870$\,SSIM), while additionally producing deployment-side variance
+estimates for every reconstructed point.
+\end{enumerate}
+
+The remainder of this paper is organized as follows. Section~\ref{sec:rel}
+reviews related work on sparse-view CT reconstruction, Gaussian
+splatting, and latent variable models. Section~\ref{sec:method} presents
+the proposed probabilistic formulation and the P5 algorithm in detail.
+Section~\ref{sec:exp} describes the experimental protocol, results, and
+diagnostics. Section~\ref{sec:conclusion} concludes and outlines future
+directions.

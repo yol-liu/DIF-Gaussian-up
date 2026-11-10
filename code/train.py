@@ -44,7 +44,7 @@ def points_digest(points):
 def load_common_init(model, path):
     '''Copy shared same-name same-shape weights; report what each arm initializes alone.'''
     import hashlib
-    weights = weights_from_checkpoint(torch.load(path, map_location='cpu'))
+    weights = weights_from_checkpoint(torch.load(path, map_location='cpu', weights_only=False))
     target = model.state_dict()
     shared, mismatched = {}, []
     for name, value in weights.items():
@@ -277,7 +277,7 @@ if __name__ == '__main__':
             with open(os.path.join(save_dir, 'common_init.json'), 'w') as handle:
                 json.dump(shared_initialization, handle, indent=2)
     if args.warm_start:
-        loaded = warm_start(model, torch.load(args.warm_start, map_location='cpu'),
+        loaded = warm_start(model, torch.load(args.warm_start, map_location='cpu', weights_only=False),
                             args.allow_missing, args.reset_head)
         if rank == 0:
             print(json.dumps(loaded, indent=2))
@@ -332,7 +332,7 @@ if __name__ == '__main__':
     raw_model = model.module if args.dist else model
     resume_path = args.resume_path or (
         f'./logs/{args.name}/ep_{args.resume}.pth' if args.resume is not None else None)
-    resume_checkpoint = torch.load(resume_path, map_location='cpu') if resume_path else None
+    resume_checkpoint = torch.load(resume_path, map_location='cpu', weights_only=False) if resume_path else None
     transfer_cfg = cfg.get('transfer', {})
     teacher = None
     initialization_hash = None
@@ -351,7 +351,7 @@ if __name__ == '__main__':
         if evidence['sparse_view_count'] != args.num_views or evidence['dense_view_count'] != cfg.dataset.get('teacher_views'):
             raise ValueError('Teacher evidence must match the actual paired view counts')
         teacher = build_model(cfg.model).to(args.device)
-        teacher.load_state_dict(weights_from_checkpoint(torch.load(transfer_cfg['checkpoint'], map_location='cpu')), strict=True)
+        teacher.load_state_dict(weights_from_checkpoint(torch.load(transfer_cfg['checkpoint'], map_location='cpu', weights_only=False)), strict=True)
         teacher.eval().requires_grad_(False)
     if resume_path:
         checkpoint = resume_checkpoint
